@@ -40,6 +40,16 @@ Review the [wiki](https://github.com/ping/newsrack/wiki#customisation) page to u
 
 You can also refer to the [example fork repo](https://github.com/ping/newsrack-fork-test/) and see the [actual customisations](https://github.com/ping/newsrack-fork-test/compare/main...custom#files_bucket) in action.
 
+### Optimised EPUBs for small e-ink readers (Xteink X3/X4/X4 Pro)
+
+`newsrack` can post-process a recipe's epub output, in the same generation pipeline (no extra service needed), for small 800x480-class e-ink readers such as the Xteink X3/X4/X4 Pro. This grayscales, downsizes and posterizes images to the panel resolution, re-encodes JPEGs as baseline, and strips embedded fonts so the reader's own font is used instead.
+
+- Per recipe: set `optimize_for_eink=True` on the `Recipe(...)` definition.
+- Globally, e.g. for local testing: set the `xteink_optimize=true` environment variable before running `_generate.py`.
+- Optionally pair it with the `xteink_conv_options` conversion options in [`_recipe_utils.py`](_recipe_utils.py) (`conv_options=xteink_conv_options`) to also tune calibre's own epub conversion (image size cap, font-size mapping, no SVG cover) for the same devices.
+
+See [`_epub_eink_optimizer.py`](_epub_eink_optimizer.py) for the implementation, adapted from ideas in [auto-epub-optimizer](https://github.com/uxjulia/auto-epub-optimizer) and [inky-self-hosted](https://github.com/uxjulia/inky-self-hosted).
+
 
 ## Available Recipes
 

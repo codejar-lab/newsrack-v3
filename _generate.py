@@ -26,6 +26,7 @@ import humanize  # type: ignore
 import requests  # type: ignore
 from bleach import linkify
 
+from _epub_eink_optimizer import EinkOptions, optimize_epub_for_eink
 from _opds import extension_contenttype_map, init_feed, simple_tag
 from _recipe_utils import Recipe, is_windows, sort_category
 from _recipes import (
@@ -266,6 +267,24 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
     opds_xml_path = publish_folder.joinpath(catalog_path)
     with opds_xml_path.open("wb") as f:  # type: ignore
         f.write(main_doc.toprettyxml(encoding="utf-8", indent=""))
+
+
+def _eink_optimize_globally_enabled() -> bool:
+    """Global override, e.g. `xteink_optimize=true` env var, to optimize every
+    epub output for small e-ink readers regardless of each Recipe's own
+    `optimize_for_eink` setting. Handy for local testing via test_recipe.sh."""
+    return str(os.environ.get("xteink_optimize", "")).strip().lower() == "true"
+
+
+def _maybe_optimize_for_eink(recipe: Recipe, epub_path: Path) -> None:
+    if epub_path.suffix.lower() != ".epub":
+        return
+    if not (recipe.optimize_for_eink or _eink_optimize_globally_enabled()):
+        return
+    try:
+        optimize_epub_for_eink(epub_path, EinkOptions())
+    except Exception:  # noqa, pylint: disable=broad-except
+        logger.exception(f"Error optimizing '{epub_path}' for e-ink")
 
 
 def _find_output(folder_path: Path, slug: str, ext: str) -> List[Path]:
@@ -710,6 +729,8 @@ def run(
                 ]
                 _ = subprocess.call(series_cmd, stdout=subprocess.PIPE)
 
+            _maybe_optimize_for_eink(recipe, source_file_path)
+
             index[recipe.slug].append(
                 {
                     "filename": f"{recipe.slug}-{pub_date:%Y-%m-%d}.{recipe.src_ext}",
@@ -785,6 +806,8 @@ def run(
                         _find_output(publish_folder, recipe.slug, ext)
                     )[-1]
                     target_file_name = Path(target_file_path.name)
+
+                    _maybe_optimize_for_eink(recipe, target_file_path)
 
                     generated[recipe.category][recipe.name].append(
                         RecipeOutput(
