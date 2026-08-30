@@ -5,139 +5,81 @@
 
 """
 thediplomat.com
+
+Switched from the WordPress REST API (WordPressNewsrackRecipe) to plain RSS
+feeds, matching the current kovidgoyal/calibre upstream recipe: thediplomat.com
+now returns HTTP 401 Unauthorized for anonymous `?rest_route=/wp/v2/posts`
+requests, so the REST-API-based scraper can no longer fetch any articles.
+The RSS feeds below are still public.
 """
-import json
-import os
-import sys
-from html import unescape
+from datetime import datetime
 
-# custom include to share code between recipes
-sys.path.append(os.environ["recipes_includes"])
-from recipes_shared import WordPressNewsrackRecipe, get_date_format
-
-from calibre.web.feeds.news import BasicNewsRecipe
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 _name = "The Diplomat"
 
 
-class TheDiplomat(WordPressNewsrackRecipe, BasicNewsRecipe):
-    title = _name
+class TheDiplomat(BasicNewsRecipe):
+    title = _name + " - " + datetime.now().strftime("%d.%m.%y")
     description = "The Diplomat is a current-affairs magazine for the Asia-Pacific, with news and analysis on politics, security, business, technology and life across the region. https://thediplomat.com/"
     language = "en"
-    __author__ = "ping"
+    __author__ = "unkn0wn"
     publication_type = "magazine"
 
-    oldest_article = 7
-    max_articles_per_feed = 25
+    oldest_article = 14  # days
+    max_articles_per_feed = 100
+    encoding = "utf-8"
+    use_embedded_content = False
+    no_stylesheets = True
+    remove_attributes = ["style", "height", "width"]
     masthead_url = "https://thediplomat.com/wp-content/themes/td_theme_v3/assets/logo/diplomat_logo_black.svg"
-
-    compress_news_images_auto_size = 8
-    reverse_article_order = False
-
-    remove_attributes = ["style", "width", "height"]
-
+    ignore_duplicate_articles = {"url"}
     extra_css = """
-    .headline { font-size: 1.8rem; margin-bottom: 0.4rem; }
-    .sub-headline { font-size: 1.2rem; font-style: italic; margin-bottom: 1rem; }
-    .sub-headline p { margin-top: 0; }
-    .article-meta { margin-bottom: 1rem; }
-    .article-meta .author { font-weight: bold; color: #444; margin-right: 0.5rem; }
-    .article-section { display: block; font-weight: bold; color: #444; }
-    .article-img, .wp-caption { margin-bottom: 0.8rem; max-width: 100%; }
-    .article-img img, .wp-caption img { display: block; max-width: 100%; height: auto; }
-    .article-img .caption, .wp-caption-text { display: block; font-size: 0.8rem; margin-top: 0.2rem; }
-    .article-img .caption p { margin: 0; }
+        #td-meta { font-size: x-small }
+        #td-story-authors { font-size: small}
+        #td-story-image{font-size: small; font-style: italic;}
+        [id^="caption-attachment"] {font-size: small; font-style: italic;}
     """
 
-    feeds = [
-        (_name, "https://thediplomat.com/"),
+    def get_cover_url(self):
+        soup = self.index_to_soup("https://thediplomat.com")
+        tag = soup.find(attrs={"class": "td-nav-mag"})
+        if tag:
+            url = tag.find("img")["src"].split("/")[-1]
+            self.cover_url = "https://magazine.thediplomat.com/media/1080/" + url
+        return super().get_cover_url()
+
+    keep_only_tags = [
+        dict(name="header", attrs={"id": "td-story-head"}),
+        classes("td-media--story td-prose td-story-magazine__link td-authors"),
     ]
 
-    def _extract_featured_media(self, post):
-        """
-        Include featured media with post content.
+    remove_tags = [
+        dict(name="aside", attrs={"id": "td-box-newsletter"}),
+        classes("td-share td-ad td-ad-inline-txt"),
+    ]
 
-        :param post: post dict
-        :param post_content: Extracted post content
-        :return:
-        """
-        post_content = post["content"]["rendered"]
-        if not post.get("featured_media"):
-            return post_content
+    feeds = [
+        ("Features", "https://thediplomat.com/category/features/feed"),
+        ("Interviews", "https://thediplomat.com/category/interviews/feed"),
+        ("Magazine Preview", "https://thediplomat.com/category/magazine/feed"),
+        # REGIONS
+        ("Central Asia", "https://thediplomat.com/regions/central-asia/feed"),
+        ("East Asia", "https://thediplomat.com/regions/east-asia/feed"),
+        ("Oceania", "https://thediplomat.com/regions/oceania-region/feed"),
+        ("South Asia", "https://thediplomat.com/regions/south-asia/feed"),
+        ("South East Asia", "https://thediplomat.com/regions/southeast-asia/feed"),
+        # TOPICS
+        ("Diplomacy", "https://thediplomat.com/topics/diplomacy/feed"),
+        ("Economy", "https://thediplomat.com/topics/economy/feed"),
+        ("Environment", "https://thediplomat.com/topics/environment/feed"),
+        ("Opinion", "https://thediplomat.com/topics/opinion/feed"),
+        ("Politics", "https://thediplomat.com/topics/politics/feed"),
+        ("Security", "https://thediplomat.com/topics/security/feed"),
+        ("Society", "https://thediplomat.com/topics/society/feed"),
+    ]
 
-        for feature_info in post.get("_embedded", {}).get("wp:featuredmedia", []):
-            # put feature media at the start of the post
-            if feature_info.get("source_url"):
-                caption = feature_info.get("caption", {}).get("rendered", "")
-                # higher-res
-                image_src = f"""
-                <div class="article-img">
-                    <img src="{feature_info["source_url"]}">
-                    <div class="caption">{caption}</div>
-                </div>"""
-                post_content = image_src + post_content
-            else:
-                post_content = (
-                    feature_info.get("description", {}).get("rendered", "")
-                    + post_content
-                )
-        return post_content
-
-    def preprocess_raw_html(self, raw_html, url):
-        # formulate the api response into html
-        post = json.loads(raw_html)
-        post_date = self.parse_date(post["date"], tz_info=None, as_utc=False)
-        soup = self.soup(
-            f"""<html>
-        <head></head>
-        <body>
-            <h1 class="headline"></h1>
-            <article data-og-link="{post["link"]}">
-                <div class="sub-headline"></div>
-                <div class="article-meta">
-                    <span class="published-dt">{post_date:{get_date_format()}}</span>
-                </div>
-            </div>
-            </article>
-        </body></html>"""
-        )
-        title = soup.new_tag("title")
-        title.string = unescape(post["title"]["rendered"])
-        soup.body.h1.string = unescape(post["title"]["rendered"])
-        soup.find("div", class_="sub-headline").append(
-            self.soup(post["excerpt"]["rendered"])
-        )
-        # inject authors
-        post_authors = self.extract_authors(post)
-        if post_authors:
-            soup.find(class_="article-meta").insert(
-                0,
-                self.soup(f'<span class="author">{", ".join(post_authors)}</span>'),
-            )
-        # inject categories
-        categories = self.extract_categories(post)
-        if categories:
-            soup.body.article.insert(
-                0,
-                self.soup(
-                    f'<span class="article-section">{" / ".join(categories)}</span>'
-                ),
-            )
-        soup.body.article.append(self.soup(self._extract_featured_media(post)))
-        return str(soup)
-
-    def populate_article_metadata(self, article, soup, first):
-        # pick up the og link from preprocess_raw_html() and set it as url instead of the api endpoint
-        og_link = soup.select("[data-og-link]")
-        if og_link:
-            article.url = og_link[0]["data-og-link"]
-        article.title = soup.find("h1", class_="headline").string
-
-    def parse_index(self):
-        articles = {}
-        br = self.get_browser()
-        for feed_name, feed_url in self.feeds:
-            articles = self.get_articles(
-                articles, feed_name, feed_url, self.oldest_article, {}, br
-            )
-        return articles.items()
+    def preprocess_html(self, soup):
+        for img in soup.findAll("img", attrs={"src": True}):
+            img["src"] = img["src"].replace("td-story-s-1", "td-story-s-2")
+        return soup

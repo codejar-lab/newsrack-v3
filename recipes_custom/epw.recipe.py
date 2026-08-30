@@ -2,9 +2,15 @@
 # vim:fileencoding=utf-8
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
+import re
 from collections import OrderedDict
 
 from calibre.web.feeds.news import BasicNewsRecipe, classes
+
+# matches /journal/<year>/<issue> links regardless of year, so this recipe
+# doesn't need to be updated every January (see git history for the bug this
+# hardcoded-year check used to cause)
+JOURNAL_ISSUE_RE = re.compile(r'/journal/(\d{4})/(\d+)')
 
 
 def absurl(x):
@@ -55,11 +61,11 @@ class EconomicAndPoliticalWeekly(BasicNewsRecipe):
             for link in links:
                 href = link['href']
                 self.log('Checking link in latest_issue_blk:', href)
-                if '/journal/' in href and '2025' in href:
+                if JOURNAL_ISSUE_RE.search(href):
                     latest_issue_url = 'https://www.epw.in' + href if href.startswith('/') else href
                     self.log('Found latest issue URL for cover (Strategy 1):', latest_issue_url)
                     break
-        
+
         # Strategy 2: Look for any journal link on the homepage
         if not latest_issue_url:
             self.log('Strategy 1 failed, trying Strategy 2')
@@ -67,21 +73,18 @@ class EconomicAndPoliticalWeekly(BasicNewsRecipe):
             journal_links = []
             for link in all_links:
                 href = link['href']
-                if '/journal/2025/' in href:
-                    # Extract issue number from URL like /journal/2025/34
-                    import re
-                    match = re.search(r'/journal/2025/(\d+)', href)
-                    if match:
-                        issue_num = int(match.group(1))
-                        journal_links.append((issue_num, href))
-            
+                match = JOURNAL_ISSUE_RE.search(href)
+                if match:
+                    year, issue_num = int(match.group(1)), int(match.group(2))
+                    journal_links.append(((year, issue_num), href))
+
             if journal_links:
-                # Sort by issue number and get the highest (latest)
+                # Sort by (year, issue number) and get the highest (latest)
                 journal_links.sort(reverse=True)
                 latest_href = journal_links[0][1]
                 latest_issue_url = 'https://www.epw.in' + latest_href if latest_href.startswith('/') else latest_href
                 self.log('Found latest issue URL for cover (Strategy 2):', latest_issue_url, 'Issue:', journal_links[0][0])
-        
+
         # Strategy 3: Look for the current year pattern more broadly
         if not latest_issue_url:
             self.log('Strategy 2 failed, trying Strategy 3')
@@ -92,7 +95,7 @@ class EconomicAndPoliticalWeekly(BasicNewsRecipe):
                 links = element.find_all('a', href=True)
                 for link in links:
                     href = link['href']
-                    if '/journal/2025/' in href:
+                    if JOURNAL_ISSUE_RE.search(href):
                         latest_issue_url = 'https://www.epw.in' + href if href.startswith('/') else href
                         self.log('Found latest issue URL for cover (Strategy 3):', latest_issue_url)
                         break
@@ -142,11 +145,11 @@ class EconomicAndPoliticalWeekly(BasicNewsRecipe):
             for link in links:
                 href = link['href']
                 self.log('Checking link in latest_issue_blk:', href)
-                if '/journal/' in href and '2025' in href:
+                if JOURNAL_ISSUE_RE.search(href):
                     latest_issue_url = 'https://www.epw.in' + href if href.startswith('/') else href
                     self.log('Found latest issue URL (Strategy 1):', latest_issue_url)
                     break
-        
+
         # Strategy 2: Look for any journal link on the homepage and find the highest issue number
         if not latest_issue_url:
             self.log('Strategy 1 failed, trying Strategy 2')
@@ -154,16 +157,13 @@ class EconomicAndPoliticalWeekly(BasicNewsRecipe):
             journal_links = []
             for link in all_links:
                 href = link['href']
-                if '/journal/2025/' in href:
-                    # Extract issue number from URL like /journal/2025/34
-                    import re
-                    match = re.search(r'/journal/2025/(\d+)', href)
-                    if match:
-                        issue_num = int(match.group(1))
-                        journal_links.append((issue_num, href))
-            
+                match = JOURNAL_ISSUE_RE.search(href)
+                if match:
+                    year, issue_num = int(match.group(1)), int(match.group(2))
+                    journal_links.append(((year, issue_num), href))
+
             if journal_links:
-                # Sort by issue number and get the highest (latest)
+                # Sort by (year, issue number) and get the highest (latest)
                 journal_links.sort(reverse=True)
                 latest_href = journal_links[0][1]
                 latest_issue_url = 'https://www.epw.in' + latest_href if latest_href.startswith('/') else latest_href
