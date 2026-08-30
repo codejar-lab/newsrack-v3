@@ -63,6 +63,11 @@ class Nautilus(BasicNewsrackRecipe, BasicNewsRecipe):
     .breadcrumb { font-size:0.8rem; text-transform:uppercase;}
     """
 
+    # static fallback used whenever the homepage topic-nav scrape below finds
+    # nothing (e.g. after a site redesign changes the nav markup) so the
+    # recipe still produces a valid, non-empty feed list instead of crashing
+    feeds = [(_name, "https://nautil.us/feed")]
+
     def get_feeds(self):
         soup = self.index_to_soup("https://nautil.us/")
         topics = soup.find_all(
@@ -70,6 +75,10 @@ class Nautilus(BasicNewsrackRecipe, BasicNewsRecipe):
             attrs={"data-ev-act": "topics", "data-ev-label": True, "href": True},
         )
         if not topics:
+            self.log.warn(
+                "Could not find topic nav links on homepage, "
+                "falling back to the main feed"
+            )
             return self.feeds
         feeds = [(t["data-ev-label"], urljoin(t["href"], "feed/")) for t in topics]
         return feeds

@@ -1,6 +1,8 @@
 static/*.compiled.js
 
 .env
+.env.*
+!.env.example
 meta/
 *.recipe
 *.epub
@@ -10,6 +12,11 @@ debug/
 static/*.css
 job_summary.md
 
+# local test_recipe.sh / manual recipe-testing output
+output/
+eink_test_output/
+test_output/
+
 # Node #
 # Dependency directories
 node_modules/
@@ -17,7 +24,9 @@ jspm_packages/
 
 venv/
 venv3/
+.venv/
 .vscode/
+!.vscode/extensions.json
 
 coverage.sh
 cov_html/
@@ -80,6 +89,9 @@ nosetests.xml
 coverage.xml
 *,cover
 .hypothesis/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Translations
 *.mo

@@ -221,10 +221,12 @@ class ScientificAmerican(BasicNewsrackRecipe, BasicNewsRecipe):
     def parse_index(self):
         # Get the cover, date and issue URL
         fp_soup = self.index_to_soup("https://www.scientificamerican.com")
-        curr_issue_link = fp_soup.find(**prefixed_classes('latest_issue_links-'))
+        # site markup previously wrapped the issue link in a container with
+        # class prefix 'latest_issue_links-'; it's now a bare <a class="issueLink-...">
+        curr_issue_link = fp_soup.find('a', **prefixed_classes('issueLink-'))
         if not curr_issue_link:
             self.abort_recipe_processing("Unable to find issue link")
-        issue_url = 'https://www.scientificamerican.com' + curr_issue_link.a["href"]
+        issue_url = 'https://www.scientificamerican.com' + curr_issue_link["href"]
         # for past editions https://www.scientificamerican.com/archive/issues/
         # issue_url = 'https://www.scientificamerican.com/issue/sa/2024/01-01/'
         soup = self.index_to_soup(issue_url)
@@ -260,10 +262,12 @@ class ScientificAmerican(BasicNewsrackRecipe, BasicNewsRecipe):
         self.log('\t', self.title, '\n')
 
         feeds = {}
-        for section in ("featured", "departments"):
+        # site renamed the 'featured' section to 'features' and added a new
+        # 'advances' section since this recipe was last updated
+        for section in ("features", "advances", "departments"):
             for article in issue_info.get("article_previews", {}).get(section, []):
                 self.log('\t', article["title"])
-                if section == "featured":
+                if section == "features":
                     feed_name = "Features"
                 else:
                     feed_name = article["category"]
