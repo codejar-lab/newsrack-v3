@@ -27,7 +27,7 @@ import requests  # type: ignore
 from bleach import linkify
 
 from _epub_eink_optimizer import EinkOptions, optimize_epub_for_eink
-from _opds import extension_contenttype_map, init_feed, simple_tag
+from _opds import extension_contenttype_map, init_feed, opds_catalog_type, simple_tag
 from _recipe_utils import Recipe, is_windows, sort_category
 from _recipes import (
     categories_sort as default_categories_sort,
@@ -134,14 +134,50 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
     :return:
     """
     main_doc = minidom.Document()
-    main_feed = init_feed(main_doc, publish_site, "newsrack", "News Rack")
+    main_feed = init_feed(
+        main_doc,
+        publish_site,
+        "newsrack",
+        "News Rack",
+        self_href=urljoin(publish_site, catalog_path),
+        start_href=urljoin(publish_site, catalog_path),
+    )
+
+    # first pass: advertise every category feed as a subsection of the root
+    # catalog, so clients that support drilling down into a hierarchy can
+    # discover them -- this is additive, the root catalog still also embeds
+    # every entry directly further down so it keeps working as a single
+    # "everything" feed for clients that don't support navigation
+    for category, publications in sorted(
+        generated_output.items(), key=sort_category_key
+    ):
+        if not any(publications.values()):
+            continue
+        main_feed.appendChild(
+            simple_tag(
+                main_doc,
+                "link",
+                attributes={
+                    "rel": "subsection",
+                    "type": f"{opds_catalog_type};kind=acquisition",
+                    "title": category.title(),
+                    "href": urljoin(publish_site, f"{slugify(category, True)}.xml"),
+                },
+            )
+        )
 
     for category, publications in sorted(
         generated_output.items(), key=sort_category_key
     ):
+        cat_xml_filename = f"{slugify(category, True)}.xml"
         cat_doc = minidom.Document()
         cat_feed = init_feed(
-            cat_doc, publish_site, "newsrack", f"News Rack - {category.title()}"
+            cat_doc,
+            publish_site,
+            "newsrack",
+            f"News Rack - {category.title()}",
+            self_href=urljoin(publish_site, cat_xml_filename),
+            start_href=urljoin(publish_site, catalog_path),
         )
 
         generated_items = [(k, v) for k, v in publications.items() if v]
@@ -191,7 +227,9 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                     simple_tag(
                         doc,
                         "category",
-                        attributes={"label": category.title()},
+                        # Atom requires a "term" attribute identifying the
+                        # category; "label" alone is not spec-compliant
+                        attributes={"term": category, "label": category.title()},
                     )
                 )
                 author_tag = simple_tag(doc, "author")
@@ -214,7 +252,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                                 attributes={
                                     "rel": "http://opds-spec.org/image",
                                     "type": "image/jpeg",
-                                    "href": cover_file_name,
+                                    "href": urljoin(publish_site, cover_file_name),
                                 },
                             )
                         )
@@ -226,7 +264,9 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                                 attributes={
                                     "rel": "http://opds-spec.org/image/thumbnail",
                                     "type": "image/jpeg",
-                                    "href": cover_thumbnail_file_name,
+                                    "href": urljoin(
+                                        publish_site, cover_thumbnail_file_name
+                                    ),
                                 },
                             )
                         )
@@ -244,7 +284,9 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                             attributes={
                                 "rel": "http://opds-spec.org/acquisition",
                                 "type": link_type,
-                                "href": f"{Path(book.rename_to).name}",
+                                "href": urljoin(
+                                    publish_site, f"{Path(book.rename_to).name}"
+                                ),
                             },
                         )
                     )
@@ -255,7 +297,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
         )
         cat_doc.insertBefore(cat_style, cat_feed)
 
-        opds_xml_path = publish_folder.joinpath(f"{slugify(category, True)}.xml")
+        opds_xml_path = publish_folder.joinpath(cat_xml_filename)
         with opds_xml_path.open("wb") as f:  # type: ignore
             f.write(cat_doc.toprettyxml(encoding="utf-8", indent=""))
 

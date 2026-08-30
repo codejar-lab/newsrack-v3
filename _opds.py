@@ -32,8 +32,16 @@ def simple_tag(
     return new_tag
 
 
+opds_catalog_type = "application/atom+xml;profile=opds-catalog"
+
+
 def init_feed(
-    doc: minidom.Document, publish_site: str, feed_id: str, title: str
+    doc: minidom.Document,
+    publish_site: str,
+    feed_id: str,
+    title: str,
+    self_href: Optional[str] = None,
+    start_href: Optional[str] = None,
 ) -> minidom.Element:
     feed = simple_tag(
         doc,
@@ -52,4 +60,32 @@ def init_feed(
     feed_author.appendChild(simple_tag(doc, "name", publish_site))
     feed_author.appendChild(simple_tag(doc, "uri", publish_site))
     feed.appendChild(feed_author)
+    # OPDS 1.2 requires every feed to declare its own canonical url via
+    # rel="self", and it's good practice to link back to the root catalog
+    # via rel="start" so clients can navigate back up without relying on
+    # their own history/breadcrumbs
+    if self_href:
+        feed.appendChild(
+            simple_tag(
+                doc,
+                "link",
+                attributes={
+                    "rel": "self",
+                    "type": opds_catalog_type,
+                    "href": self_href,
+                },
+            )
+        )
+    if start_href:
+        feed.appendChild(
+            simple_tag(
+                doc,
+                "link",
+                attributes={
+                    "rel": "start",
+                    "type": opds_catalog_type,
+                    "href": start_href,
+                },
+            )
+        )
     return feed
