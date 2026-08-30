@@ -121,6 +121,9 @@ jobs:
           skip: ${{ github.event.inputs.skip }}
           verbose: ${{ github.event.inputs.verbose }}
           accounts: ${{ secrets.accounts }}
+          # optimize every epub output for small e-ink readers (Xteink X3/X4/X4 Pro)
+          # by default; see _epub_eink_optimizer.py
+          xteink_optimize: "true"
         run: |
           sh build.sh
           if [[ -f 'job_summary.md' ]]; then cat 'job_summary.md' >> $GITHUB_STEP_SUMMARY; fi
