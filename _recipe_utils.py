@@ -27,6 +27,22 @@ default_conv_options: Dict[str, List[str]] = {
     ],
 }
 
+# ebook-convert options tuned for small e-ink readers with an 800x480-class
+# panel, e.g. Xteink X3/X4/X4 Pro. Pair with Recipe(optimize_for_eink=True)
+# so the finished epub is also grayscaled/resized/font-stripped for the
+# device (see _epub_eink_optimizer.py).
+xteink_conv_options: Dict[str, List[str]] = {
+    "epub": [
+        "--output-profile=tablet",
+        "-vvv",
+        "--extra-css=img{height:auto !important;}",
+        "--font-size-mapping=8,10,12,14,16,18,20,22",
+        "--epub-max-image-size=800x480",
+        "--no-svg-cover",
+        "--filter-css=color,background,background-color",
+    ],
+}
+
 
 @dataclass
 class CoverOptions:
@@ -59,6 +75,9 @@ class Recipe:
     )  # alt formats that src_ext will be converted to
     timeout: int = default_recipe_timeout  # max time allowed for executing the recipe
     overwrite_cover: bool = True  # generate a plain cover to overwrite calibre's
+    optimize_for_eink: bool = (
+        False  # post-process epub output for small e-ink readers (Xteink X3/X4/X4 Pro)
+    )
     last_run: float = 0  # last run unix timestamp
     enable_on: Union[
         bool, Callable[..., bool]
