@@ -19,7 +19,7 @@ from math import ceil
 from pathlib import Path
 from timeit import default_timer as timer
 from typing import Dict, List, Optional
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from xml.dom import minidom
 
 import humanize  # type: ignore
@@ -126,6 +126,19 @@ def _add_recipe_summary(
     return f"| {rec.name} | {status} | {duration_str} |\n"
 
 
+def _opds_url(publish_site: str, path: str) -> str:
+    """
+    Build an absolute url for use in the OPDS feeds, forced to http://.
+    Small e-ink readers like the Xteink X3/X4 are resource-constrained, and
+    the TLS handshake overhead of https adds up when browsing/downloading
+    many small OPDS entries -- the site itself still serves https (and any
+    https-only host will just redirect these), but the feeds advertise the
+    lighter-weight scheme for constrained clients that use it directly.
+    """
+    url = urljoin(publish_site, path)
+    return urlunsplit(urlsplit(url)._replace(scheme="http"))
+
+
 def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) -> None:
     """
     Generate minimal OPDS
@@ -139,8 +152,8 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
         publish_site,
         "newsrack",
         "News Rack",
-        self_href=urljoin(publish_site, catalog_path),
-        start_href=urljoin(publish_site, catalog_path),
+        self_href=_opds_url(publish_site, catalog_path),
+        start_href=_opds_url(publish_site, catalog_path),
     )
 
     # first pass: advertise every category feed as a subsection of the root
@@ -161,7 +174,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                     "rel": "subsection",
                     "type": f"{opds_catalog_type};kind=acquisition",
                     "title": category.title(),
-                    "href": urljoin(publish_site, f"{slugify(category, True)}.xml"),
+                    "href": _opds_url(publish_site, f"{slugify(category, True)}.xml"),
                 },
             )
         )
@@ -176,8 +189,8 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
             publish_site,
             "newsrack",
             f"News Rack - {category.title()}",
-            self_href=urljoin(publish_site, cat_xml_filename),
-            start_href=urljoin(publish_site, catalog_path),
+            self_href=_opds_url(publish_site, cat_xml_filename),
+            start_href=_opds_url(publish_site, catalog_path),
         )
 
         generated_items = [(k, v) for k, v in publications.items() if v]
@@ -252,7 +265,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                                 attributes={
                                     "rel": "http://opds-spec.org/image",
                                     "type": "image/jpeg",
-                                    "href": urljoin(publish_site, cover_file_name),
+                                    "href": _opds_url(publish_site, cover_file_name),
                                 },
                             )
                         )
@@ -264,7 +277,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                                 attributes={
                                     "rel": "http://opds-spec.org/image/thumbnail",
                                     "type": "image/jpeg",
-                                    "href": urljoin(
+                                    "href": _opds_url(
                                         publish_site, cover_thumbnail_file_name
                                     ),
                                 },
@@ -284,7 +297,7 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                             attributes={
                                 "rel": "http://opds-spec.org/acquisition",
                                 "type": link_type,
-                                "href": urljoin(
+                                "href": _opds_url(
                                     publish_site, f"{Path(book.rename_to).name}"
                                 ),
                             },
