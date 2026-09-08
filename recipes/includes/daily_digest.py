@@ -21,6 +21,11 @@ from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 _name = 'Daily Digest'
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# repo static/ dir (recipes/includes/ -> ../../static) -- holds the bundled
+# OpenSans faces and the monochrome Noto Emoji font used on the cover
+_STATIC_DIR = os.path.normpath(os.path.join(_HERE, '..', '..', 'static'))
+
 GNEWS_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -438,7 +443,7 @@ class DailyDigestBase(BasicNewsRecipe):
     _COVER_W, _COVER_H = 1200, 2000
 
     _COVER_FONT_DIRS = (
-        'static', 'recipes/static',
+        _STATIC_DIR, 'static', 'recipes/static',
         '/usr/share/fonts/truetype/dejavu',
         '/usr/share/fonts/truetype/liberation',
         '/usr/share/fonts/truetype/liberation2',
@@ -477,6 +482,37 @@ class DailyDigestBase(BasicNewsRecipe):
         self._font_cache[key] = f
         return f
 
+    def _cover_motif(self, img, M):
+        '''Paint the newspaper glyph in the lower-left, clipped to the frame.
+        Falls back to a soft grey disc if the emoji font is unavailable.'''
+        from PIL import Image, ImageDraw, ImageFont
+        W, H = img.size
+        size = 380
+        layer = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        x, y = M + 20, H - M - size - 10
+        f = None
+        for fdir in self._COVER_FONT_DIRS:
+            try:
+                f = ImageFont.truetype(
+                    os.path.join(fdir, 'NotoEmoji.ttf'), size)
+                break
+            except OSError:
+                continue
+        if f is not None:
+            try:
+                ld.text((x, y), '\U0001F4F0', font=f, fill=(60, 60, 60, 255))
+            except Exception:
+                f = None
+        if f is None:
+            ld.ellipse([x, y + 40, x + size, y + size], fill=(150, 150, 150, 255))
+        mask = Image.new('L', (W, H), 0)
+        ImageDraw.Draw(mask).rectangle(
+            [M + 3, M + 3, W - M - 3, H - M - 3], fill=255)
+        img.paste(
+            Image.alpha_composite(img.convert('RGBA'), layer).convert('RGB'),
+            (0, 0), mask)
+
     def default_cover(self, cover_file):
         '''A spare black-on-off-white cover sized for the Xteink X4 panel:
         "DAILY DIGEST" over the day and date, any weekly newsletter in this
@@ -505,19 +541,9 @@ class DailyDigestBase(BasicNewsRecipe):
         def left(y, text, f, fill=ink):
             d.text((X, y), text, font=f, fill=fill)
 
-        # overlapping discs, lower-left, clipped inside the border frame. Flat
-        # greys chosen to land on the two mid tones of a 4-level e-ink panel
-        # (light ~ 170, the smaller accent ~ 85) after quantisation.
-        motif = img.copy()
-        md = ImageDraw.Draw(motif)
-        for (cx, cy, r, g) in ((M + 140, H - M - 300, 210, 170),
-                               (M + 250, H - M - 170, 175, 170),
-                               (M + 95, H - M - 140, 140, 120)):
-            md.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(g, g, g))
-        mask = Image.new('L', (W, H), 0)
-        ImageDraw.Draw(mask).rectangle(
-            [M + 2, M + 2, W - M - 2, H - M - 2], fill=255)
-        img.paste(motif, (0, 0), mask)
+        # a newspaper icon (monochrome Noto Emoji, U+1F4F0) as the lower-left
+        # motif, clipped inside the border frame
+        self._cover_motif(img, M)
         d = ImageDraw.Draw(img)
 
         d.rectangle([M, M, W - M, H - M], outline=ink, width=4)
