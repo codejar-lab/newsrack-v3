@@ -9,9 +9,25 @@ small e-ink readers (Xteink X3/X4/X4 Pro and similar 800x480-class screens).
 Ideas adapted from:
 - https://github.com/uxjulia/auto-epub-optimizer
 - https://github.com/uxjulia/inky-self-hosted
+- https://github.com/b1rdmania/epubkit  (the 20-step web optimiser)
+- https://github.com/uxjulia/CrossInk    (Xteink X3/X4 CrossPoint firmware fork)
 - common e-ink / Kindle / Kobo EPUB slimming guides (grayscale + downscale +
   posterize images, drop embedded fonts, strip colour/shadow CSS, recompress
   the container with max deflate)
+
+CrossInk / CrossPoint compatibility (its EPUB parser is expat + a hand-written
+XHTML/CSS renderer on an ESP32 with ~380 KB usable RAM and a 4-level SSD1677
+panel), applied here:
+- every image -> baseline (never progressive) JPEG, quantised to the 4 panel
+  greys (0/85/170/255) with Floyd-Steinberg dithering, auto-contrast + a mild
+  boost, alpha flattened onto white, long edge <= 800 px
+- PNGs kept as PNG but reduced to a 4-colour greyscale palette
+- image entries STORED (not deflated) in the zip so the firmware skips an
+  inflate pass; mimetype still first and stored
+- interaction-only attributes (data-*, aria-*, role, tabindex, itemprop, ...)
+  stripped from the markup; Latin ligatures folded to ASCII
+- OS artifacts (.DS_Store, __MACOSX, ._*, Thumbs.db) dropped
+- embedded fonts removed (the device uses its own EpdFont / SD-card fonts)
 
 Unlike those projects (separate watcher/Docker services that post-process an
 EPUB after the fact), this runs in-process as the last step of the existing
@@ -36,7 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PIL import Image, ImageFile, ImageOps
+from PIL import Image, ImageEnhance, ImageFile, ImageOps
 
 # a partially-downloaded image must still open so we can greyscale it
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -49,6 +65,28 @@ _RASTER_EXTS = {
     ".bmp", ".webp", ".tif", ".tiff", ".avif",
 }
 _HTML_EXTS = {".xhtml", ".html", ".htm"}
+
+# OS/reader cruft that must never end up inside the repackaged container
+# (epubkit / CrossInk "clean OS artifacts" step)
+_OS_ARTIFACTS = {
+    ".ds_store", "thumbs.db", "desktop.ini", ".spotlight-v100", ".trashes",
+}
+_OS_ARTIFACT_DIRS = {"__macosx"}
+
+
+def _is_os_artifact(p: Path) -> bool:
+    if p.name.lower() in _OS_ARTIFACTS or p.name.startswith("._"):
+        return True
+    return any(part.lower() in _OS_ARTIFACT_DIRS for part in p.parts)
+
+
+# The SSD1677 e-ink controller on the Xteink X3/X4 drives a 4-level greyscale
+# panel: black, dark grey, light grey, white. Mapping every image onto exactly
+# those tones (with Floyd-Steinberg dithering) is what CrossInk / CrossPoint's
+# own optimiser and epubkit do -- it matches what the hardware can actually
+# show, keeps files tiny, and avoids the muddy mid-greys a 16-level posterise
+# leaves that the panel then has to round anyway.
+_EINK_TONES = (0, 85, 170, 255)
 
 # image container magic bytes, for the belt-and-braces sweep over oddly named
 # / extensionless files
@@ -112,14 +150,26 @@ _CSS_EINK_BASE = (
 class EinkOptions:
     """Optimisation options tuned for the Xteink X3/X4/X4 Pro (800x480 panel)."""
 
-    max_width: int = 800
-    max_height: int = 480
+    # the X4 panel is 480x800 portrait -- epubkit's target too
+    max_width: int = 480
+    max_height: int = 800
     # a cover is the one image allowed to keep portrait proportions
-    cover_max_width: int = 600
+    cover_max_width: int = 480
     cover_max_height: int = 800
     jpeg_quality: int = 75
     grayscale: bool = True
-    posterize_bits: int = 4  # 2**4 = 16 grey levels, plenty for e-ink
+    # CrossInk/epubkit-style tone mapping: map onto the 4 panel greys
+    # (0/85/170/255). Dithering looks better on the panel but adds
+    # high-frequency noise that balloons JPEG; keep it off for the JPEG path
+    # (flat 4-level regions compress *smaller* than the original) and let the
+    # SSD1677 controller do its own dither on display.
+    eink_quantize: bool = True
+    dither: bool = False
+    autocontrast: bool = True
+    # mild boost so scans / news photos stay legible after 4-level quantise
+    # (epubkit uses 1.5; a touch gentler here to protect midtone detail)
+    contrast_boost: float = 1.2
+    posterize_bits: int = 4  # fallback if eink_quantize is off (16 grey levels)
     png_colors: int = 16  # palette size for PNGs kept as PNG
     strip_fonts: bool = True
     strip_css: bool = True
@@ -138,6 +188,12 @@ def _walk(extract_dir: Path) -> Dict[str, List[Path]]:
     }
     for p in extract_dir.rglob("*"):
         if not p.is_file():
+            continue
+        if _is_os_artifact(p):
+            try:
+                p.unlink()
+            except OSError:
+                pass
             continue
         ext = p.suffix.lower()
         if ext in _RASTER_EXTS:
@@ -210,6 +266,59 @@ def _grayscale_file(path: Path) -> None:
         logger.exception("Could not grayscale %s", path)
 
 
+_eink_palette_cache: List[Image.Image] = []
+
+
+def _eink_palette_image() -> Image.Image:
+    """A 4-entry greyscale palette image for `Image.quantize`. The source must
+    be RGB for `quantize(palette=...)` to match correctly (an L source silently
+    mismaps), so callers convert first."""
+    if not _eink_palette_cache:
+        pal = Image.new("P", (1, 1))
+        pal.putpalette([c for tone in _EINK_TONES for c in (tone, tone, tone)])
+        _eink_palette_cache.append(pal)
+    return _eink_palette_cache[0]
+
+
+# nearest-tone lookup table, for the non-dithered path
+_EINK_LUT = bytes(
+    min(_EINK_TONES, key=lambda t: abs(t - i)) for i in range(256)
+)
+
+
+def _flatten_alpha(im: Image.Image) -> Image.Image:
+    """Composite any transparency onto white (JPEG has no alpha, and a black
+    fill is what you get otherwise)."""
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(bg, rgba).convert("RGB")
+    return im
+
+
+def _eink_tone(l_img: Image.Image, opts: EinkOptions) -> Image.Image:
+    """Autocontrast + gentle contrast boost + quantise an L image to the 4
+    panel greys (optionally Floyd-Steinberg dithered). Returns an L image."""
+    out = l_img
+    if opts.autocontrast:
+        try:
+            out = ImageOps.autocontrast(out, cutoff=1)
+        except OSError:
+            pass
+    if opts.contrast_boost and abs(opts.contrast_boost - 1.0) > 1e-3:
+        out = ImageEnhance.Contrast(out).enhance(opts.contrast_boost)
+    if opts.eink_quantize:
+        if opts.dither:
+            out = out.convert("RGB").quantize(
+                palette=_eink_palette_image(), dither=Image.FLOYDSTEINBERG
+            ).convert("L")
+        else:
+            out = out.point(_EINK_LUT)
+    elif opts.posterize_bits < 8:
+        out = ImageOps.posterize(out, opts.posterize_bits)
+    return out
+
+
 def _optimize_image(path: Path, opts: EinkOptions) -> bool:
     """Greyscale + downscale + posterize `path`, re-saving in its original
     container format. Returns True if the file is now guaranteed non-colour."""
@@ -246,11 +355,7 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
         has_alpha = im.mode in ("RGBA", "LA", "PA") or (
             im.mode == "P" and "transparency" in im.info
         )
-
-        if opts.grayscale:
-            im = im.convert("LA" if has_alpha else "L")
-        elif im.mode not in ("L", "LA", "RGB", "RGBA"):
-            im = im.convert("RGBA" if has_alpha else "RGB")
+        keep_alpha = has_alpha and fmt in ("PNG", "WEBP")
 
         if _is_cover(path):
             max_w, max_h = opts.cover_max_width, opts.cover_max_height
@@ -260,34 +365,41 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
         if new_size != (im.width, im.height):
             im = im.resize(new_size, Image.LANCZOS)
 
-        if opts.grayscale and opts.posterize_bits < 8:
-            if im.mode == "LA":
-                l_channel, a_channel = im.split()
-                l_channel = ImageOps.posterize(l_channel, opts.posterize_bits)
-                im = Image.merge("LA", (l_channel, a_channel))
-            elif im.mode == "L":
-                im = ImageOps.posterize(im, opts.posterize_bits)
+        if not opts.grayscale:
+            if im.mode not in ("L", "LA", "RGB", "RGBA"):
+                im = im.convert("RGBA" if has_alpha else "RGB")
+        elif keep_alpha:
+            rgba = im.convert("RGBA")
+            alpha = rgba.getchannel("A")
+            im = Image.merge("LA", (_eink_tone(rgba.convert("L"), opts), alpha))
+        else:
+            im = _eink_tone(_flatten_alpha(im).convert("L"), opts)
 
         if fmt == "JPEG":
             im.convert("L" if im.mode in ("L", "LA", "1") else "RGB").save(
                 path, format="JPEG", quality=opts.jpeg_quality,
                 progressive=False, optimize=True,
+                subsampling=(0 if im.mode == "RGB" else -1),
             )
         elif fmt == "PNG":
-            if im.mode in ("LA", "RGBA"):
-                im.save(path, format="PNG", optimize=True)
-            else:
-                out = im.convert("L") if im.mode != "L" else im
-                if opts.grayscale and 0 < opts.png_colors < 256:
-                    out = out.quantize(colors=opts.png_colors,
-                                       method=Image.MEDIANCUT)
-                out.save(path, format="PNG", optimize=True)
+            out = im
+            if opts.grayscale and out.mode == "L" and opts.eink_quantize:
+                # a 4-tone L image -> a 4-colour palette PNG (tiny). _eink_tone
+                # already mapped the pixels onto the 4 tones; this just packs
+                # them into a 2-bit palette.
+                out = out.convert("RGB").quantize(
+                    palette=_eink_palette_image(), dither=Image.NONE)
+            elif opts.grayscale and out.mode == "L" and 0 < opts.png_colors < 256:
+                out = out.quantize(colors=opts.png_colors,
+                                   method=Image.MEDIANCUT)
+            out.save(path, format="PNG", optimize=True)
         elif fmt == "GIF":
-            im.convert("L").save(path, format="GIF", optimize=True)
+            (im if im.mode == "L" else im.convert("L")).save(
+                path, format="GIF", optimize=True)
         elif fmt == "WEBP":
-            save_im = im if im.mode in ("L", "LA") else im.convert("L")
-            save_im.save(path, format="WEBP", quality=opts.jpeg_quality)
-        else:  # BMP / TIFF -- keep the container, just greyscale it
+            (im if im.mode in ("L", "LA") else im.convert("L")).save(
+                path, format="WEBP", quality=opts.jpeg_quality)
+        else:  # BMP / TIFF -- keep the container, just tone it
             (im if im.mode in ("L", "LA") else im.convert("L")).save(
                 path, format=fmt
             )
@@ -433,6 +545,28 @@ _EXTERNAL_LINK_RE = re.compile(
 _REMOTE_IMG_RE = re.compile(
     r"<img\b[^>]*\bsrc\s*=\s*([\"'])\s*(?:https?:)?//[^\"']*\1[^>]*>", re.IGNORECASE
 )
+# interaction-only attributes that just cost the 380 KB-RAM firmware parse time
+# (epubkit / CrossInk strip data-*, aria-*, role, tabindex, ...). Applied only
+# inside opening tags (see _strip_junk_attrs) and only in their `name="value"`
+# form, so prose like "the role of" is never touched.
+_OPEN_TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
+_JUNK_ATTR_RE = re.compile(
+    r"""\s(?:data-[\w:.-]+|aria-[\w-]+|role|tabindex|contenteditable|draggable|"""
+    r"""spellcheck|autocapitalize|itemprop|itemscope|itemtype|longdesc)"""
+    r"""\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+)""",
+    re.IGNORECASE,
+)
+
+
+def _strip_junk_attrs(html: str) -> str:
+    return _OPEN_TAG_RE.sub(lambda m: _JUNK_ATTR_RE.sub("", m.group(0)), html)
+# Latin ligature codepoints -> ASCII, so books render on fonts (EpdFont / SD
+# fonts) that have no ligature glyphs
+_LIGATURES = {
+    "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
+    "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st",
+}
+_LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 
 
 def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
@@ -448,6 +582,9 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _FOOTER_P_RE.sub("", new)
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
         new = _REMOTE_IMG_RE.sub("", new)
+        new = _strip_junk_attrs(new)
+        if _LIGATURE_RE.search(new):
+            new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
         if new != content:
             path.write_text(new, encoding="utf-8")
 
@@ -465,7 +602,17 @@ def _repackage_epub(extract_dir: Path, dest: Path, compresslevel: int = 9) -> No
         for file_path in sorted(extract_dir.rglob("*")):
             if not file_path.is_file() or file_path == mimetype_file:
                 continue
-            zf.write(file_path, file_path.relative_to(extract_dir))
+            if _is_os_artifact(file_path):
+                continue
+            arc = file_path.relative_to(extract_dir)
+            # already-compressed payloads: store, so the RAM-constrained
+            # firmware doesn't spend an inflate pass on them
+            ct = (
+                zipfile.ZIP_STORED
+                if file_path.suffix.lower() in _RASTER_EXTS
+                else zipfile.ZIP_DEFLATED
+            )
+            zf.write(file_path, arc, compress_type=ct)
 
 
 # --------------------------------------------------------------------------- #
@@ -475,11 +622,15 @@ def optimize_epub_for_eink(
     epub_path: Path, opts: Optional[EinkOptions] = None
 ) -> bool:
     """
-    Optimise an EPUB in-place for small e-ink readers: grayscale + resize +
-    posterize images to the panel resolution (keeping each image's container
-    format), strip embedded fonts, drop colour/shadow/animation CSS and any
-    scripts, remove calibre's download-source footer and off-device links,
-    then recompress the container with maximum deflate.
+    Optimise an EPUB in-place for small e-ink readers (Xteink X3/X4 running the
+    CrossPoint / CrossInk firmware): grayscale + resize to the 480x800 panel +
+    map onto the 4 SSD1677 greys, baseline (never progressive) JPEG, alpha
+    flattened onto white, each image kept in its container format; strip
+    embedded fonts, drop colour/shadow/animation CSS and any scripts, remove
+    calibre's download-source footer and off-device links, strip
+    interaction-only markup attributes, fold Latin ligatures, drop OS
+    artifacts, then repackage with mimetype first + image entries stored so the
+    RAM-constrained firmware skips an inflate pass.
 
     Returns True if the file was modified.
     """
