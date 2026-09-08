@@ -18,11 +18,13 @@ Ideas adapted from:
 CrossInk / CrossPoint compatibility (its EPUB parser is expat + a hand-written
 XHTML/CSS renderer on an ESP32 with ~380 KB usable RAM and a 4-level SSD1677
 panel), applied here:
-- every image -> baseline (never progressive) JPEG, fit to the 480x800 panel,
-  mapped to the 4 panel greys (0/85/170/255), auto-contrast + a mild boost,
-  alpha flattened onto white
+- every image fit to the 480x800 panel, mapped to the 4 panel greys
+  (0/85/170/255), auto-contrast + a mild boost, alpha flattened onto white
+- content images written as 2-bit (4-colour) PNG -- ~3x smaller than the
+  equivalent 4-tone JPEG, which only adds DCT noise around the 4 levels;
+  the OPF manifest and every <img>/<link>/url() ref are rewritten to match
+- any JPEG that is kept stays baseline (never progressive)
 - <picture><source> collapsed to the single <img>
-- PNGs kept as PNG but reduced to a 4-colour greyscale palette
 - image entries STORED (not deflated) in the zip so the firmware skips an
   inflate pass; mimetype still first and stored
 - interaction-only attributes (data-*, aria-*, role, tabindex, itemprop, ...)
@@ -180,6 +182,10 @@ class EinkOptions:
     contrast_boost: float = 1.2
     posterize_bits: int = 4  # fallback if eink_quantize is off (16 grey levels)
     png_colors: int = 16  # palette size for PNGs kept as PNG
+    # a 4-tone image is ~3x smaller as a 2-bit PNG than as JPEG (JPEG only adds
+    # DCT noise around the 4 levels). Convert content JPEGs to PNG and rewrite
+    # the manifest / <img> refs. CrossInk has a native PngToBmpConverter.
+    jpeg_to_png: bool = True
     strip_fonts: bool = True
     strip_css: bool = True
     strip_scripts: bool = True
@@ -328,16 +334,25 @@ def _eink_tone(l_img: Image.Image, opts: EinkOptions) -> Image.Image:
     return out
 
 
-def _optimize_image(path: Path, opts: EinkOptions) -> bool:
-    """Greyscale + downscale + posterize `path`, re-saving in its original
-    container format. Returns True if the file is now guaranteed non-colour."""
+def _grey_palette(im: Image.Image) -> bool:
+    pal = im.getpalette() if im.mode == "P" else None
+    return not pal or all(
+        pal[i] == pal[i + 1] == pal[i + 2]
+        for i in range(0, len(pal) - 2, 3)
+    )
+
+
+def _optimize_image(path: Path, opts: EinkOptions):
+    """Greyscale + downscale + tone-map `path`. Content JPEGs are rewritten as
+    2-bit PNG (see EinkOptions.jpeg_to_png). Returns ``(is_non_colour,
+    new_path_or_None)`` -- new_path is set only when the file was renamed."""
     try:
         with Image.open(path) as src:
             src.load()
             src_format = src.format
             im = src.copy()
     except Exception:  # not a decodable image, leave it alone
-        return False
+        return False, None
 
     fmt = _WRITABLE_FORMATS.get(
         (src_format or path.suffix.lstrip(".").upper()).replace("JPG", "JPEG"),
@@ -347,18 +362,20 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
         # a format PIL read but cannot write (e.g. AVIF w/o plugin) -- don't
         # risk corrupting the manifest, just try to at least greyscale it
         _grayscale_file(path)
-        return False
+        return False, None
 
-    # already-optimised (or already-small greyscale) image: re-encoding a
-    # posterized JPEG just adds a generation of ringing and grows the file, so
-    # leave it untouched -- this also makes the whole pass idempotent
+    max_w = opts.cover_max_width if _is_cover(path) else opts.max_width
+    max_h = opts.cover_max_height if _is_cover(path) else opts.max_height
+    # already-optimised: greyscale (L/LA/1, or a grey-palette PNG we made last
+    # run) and already within the panel size -> leave it, keeping the pass
+    # idempotent and avoiding a re-encode generation
     if (
         opts.grayscale
-        and im.mode in ("L", "LA", "1")
-        and im.width <= (opts.cover_max_width if _is_cover(path) else opts.max_width)
-        and im.height <= (opts.cover_max_height if _is_cover(path) else opts.max_height)
+        and (im.mode in ("L", "LA", "1")
+             or (im.mode == "P" and _grey_palette(im)))
+        and im.width <= max_w and im.height <= max_h
     ):
-        return True
+        return True, None
 
     try:
         has_alpha = im.mode in ("RGBA", "LA", "PA") or (
@@ -366,10 +383,6 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
         )
         keep_alpha = has_alpha and fmt in ("PNG", "WEBP")
 
-        if _is_cover(path):
-            max_w, max_h = opts.cover_max_width, opts.cover_max_height
-        else:
-            max_w, max_h = opts.max_width, opts.max_height
         new_size = _resize_dims(im.width, im.height, max_w, max_h)
         if new_size != (im.width, im.height):
             im = im.resize(new_size, Image.LANCZOS)
@@ -384,6 +397,23 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
         else:
             im = _eink_tone(_flatten_alpha(im).convert("L"), opts)
 
+        to_png = (
+            fmt == "JPEG" and opts.grayscale and opts.eink_quantize
+            and opts.jpeg_to_png and im.mode in ("L", "1")
+        )
+        if to_png:
+            # 4-tone L image (from _eink_tone) -> 2-bit palette PNG
+            out = im.convert("RGB").quantize(
+                palette=_eink_palette_image(), dither=Image.NONE)
+            target = path.with_suffix(".png")
+            out.save(target, format="PNG", optimize=True)
+            if target != path:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                return opts.grayscale, target
+            return opts.grayscale, None
         if fmt == "JPEG":
             im.convert("L" if im.mode in ("L", "LA", "1") else "RGB").save(
                 path, format="JPEG", quality=opts.jpeg_quality,
@@ -412,30 +442,40 @@ def _optimize_image(path: Path, opts: EinkOptions) -> bool:
             (im if im.mode in ("L", "LA") else im.convert("L")).save(
                 path, format=fmt
             )
-        return opts.grayscale
+        return opts.grayscale, None
     except Exception:  # noqa, pylint: disable=broad-except
         logger.exception("Unable to optimise image %s for e-ink", path)
         if opts.grayscale:
             _grayscale_file(path)
-        return False
+        return False, None
 
 
-def _process_images(images: List[Path], other: List[Path], opts: EinkOptions):
+def _process_images(images: List[Path], other: List[Path],
+                    opts: EinkOptions) -> Dict[str, str]:
     """Optimise every image; then a cheap belt-and-braces sweep that greyscales
     anything colour that slipped through (odd extension, format PIL couldn't
-    round-trip, ...)."""
+    round-trip, ...). Returns ``{old filename: new filename}`` for the JPEGs
+    rewritten as PNG, so the manifest / markup can be updated."""
     handled: Dict[Path, bool] = {}
+    renames: Dict[str, str] = {}
+    live: List[Path] = []
     if images:
         workers = min(opts.image_workers, len(images))
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = ex.map(lambda p: _optimize_image(p, opts), images)
-            for path, ok in zip(images, results):
+            results = list(ex.map(lambda p: _optimize_image(p, opts), images))
+        for path, (ok, new_path) in zip(images, results):
+            if new_path is not None and new_path != path:
+                renames[path.name] = new_path.name
+                handled[new_path] = ok
+                live.append(new_path)
+            else:
                 handled[path] = ok
+                live.append(path)
 
     if not opts.grayscale:
-        return
+        return renames
 
-    for p in images + [q for q in other if _sniff_image(q)]:
+    for p in live + [q for q in other if _sniff_image(q)]:
         if handled.get(p):
             continue
         try:
@@ -451,6 +491,7 @@ def _process_images(images: List[Path], other: List[Path], opts: EinkOptions):
         if mode in ("L", "LA", "1") or (mode == "P" and grey_palette):
             continue
         _grayscale_file(p)
+    return renames
 
 
 # --------------------------------------------------------------------------- #
@@ -581,6 +622,36 @@ _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
 
 
+def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
+    """After JPEGs were rewritten as PNG, fix every reference to them: manifest
+    hrefs, <img src>/srcset, CSS url(), NCX. Also flips the OPF media-type of
+    the renamed items to image/png."""
+    if not renames:
+        return
+    # calibre gives every image in a book a unique basename, so matching refs
+    # by filename (not full path) is safe and covers href/src/srcset/url() alike
+    subs = [
+        (re.compile(r"(?<![\w.\-])" + re.escape(old) + r"(?![\w])"), new)
+        for old, new in renames.items()
+    ]
+    for path in text_files:
+        content = _read_text(path)
+        if content is None:
+            continue
+        new = content
+        for rx, repl in subs:
+            new = rx.sub(repl, new)
+        if path.suffix.lower() == ".opf":
+            new = re.sub(
+                r'(<item\b[^>]*\bhref="[^"]*\.png"[^>]*\bmedia-type=")'
+                r'image/jpe?g(")', r"\1image/png\2", new, flags=re.IGNORECASE)
+            new = re.sub(
+                r'(<item\b[^>]*\bmedia-type=")image/jpe?g("[^>]*\bhref="'
+                r'[^"]*\.png")', r"\1image/png\2", new, flags=re.IGNORECASE)
+        if new != content:
+            path.write_text(new, encoding="utf-8")
+
+
 def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
     for path in htmls:
         content = _read_text(path)
@@ -637,8 +708,8 @@ def optimize_epub_for_eink(
     """
     Optimise an EPUB in-place for small e-ink readers (Xteink X3/X4 running the
     CrossPoint / CrossInk firmware): grayscale + resize to the 480x800 panel +
-    map onto the 4 SSD1677 greys, baseline (never progressive) JPEG, alpha
-    flattened onto white, each image kept in its container format; strip
+    map onto the 4 SSD1677 greys, content images rewritten as 2-bit PNG (with
+    the manifest / markup refs updated), alpha flattened onto white; strip
     embedded fonts, drop colour/shadow/animation CSS and any scripts, remove
     calibre's download-source footer and off-device links, strip
     interaction-only markup attributes, fold Latin ligatures, drop OS
@@ -659,12 +730,16 @@ def optimize_epub_for_eink(
             zf.extractall(extract_dir)
 
         b = _walk(extract_dir)
-        _process_images(b["images"], b["other"], opts)
+        renames = _process_images(b["images"], b["other"], opts)
         if opts.strip_fonts:
             _strip_fonts(b["fonts"], b["opf"], b["css"])
         if opts.strip_css:
             _strip_css(b["css"])
         _clean_html_files(b["html"], opts)
+        if renames:
+            ncx = [p for p in b["other"] if p.suffix.lower() == ".ncx"]
+            _rewrite_image_refs(
+                b["opf"] + b["html"] + b["css"] + ncx, renames)
 
         # atomic in-place replace, on the same filesystem as the epub
         try:
