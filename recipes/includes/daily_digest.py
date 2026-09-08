@@ -69,7 +69,7 @@ NEWSLETTER_FEEDS = (
     ('Last Week in AI', 'https://lastweekin.ai/feed', True),
     ('India Wants to Know Quiz', 'https://iwtkquiz.substack.com/feed', True),
 )
-NEWSLETTER_MAX_AGE_DAYS = 1.25    # same discovery window as everything else
+NEWSLETTER_MAX_AGE_DAYS = 1.15   # same discovery window as everything else
 WEEKLY_GAP_DAYS = 4              # avg days between posts to count as "weekly"
 
 # public RSS-to-JSON gateways, tried in order when a feed 403s us directly
@@ -115,6 +115,48 @@ NL_JUNK = _class_matcher(
 )
 HINDU_JUNK = _class_matcher(
     ('hide-mobile', 'comments-shares', 'share-page', 'editiondetails'),
+)
+NL_JUNK_EXTRA = _class_matcher(
+    ('ad', 'ads', 'advert', 'ad-wrapper', 'ad-container', 'sponsored',
+     'sponsorship', 'partner-message', 'beehiiv-ad', 'native-ad',
+     'recommendations-widget', 'subscribe-cta', 'footer-cta'),
+    prefixes=('ad-', 'ads-', 'advert', 'sponsor'),
+)
+
+# A block whose (short) text starts with one of these is a sponsor slot / house
+# ad / boilerplate, not article content. Matched only against block elements
+# and only when the block's text is short, so a real paragraph that happens to
+# mention a sponsor is never dropped.
+_NL_AD_MARKERS = (
+    'message from our sponsor', 'a message from our sponsor', 'together with',
+    'presented by', 'sponsored by', 'brought to you by', 'in partnership with',
+    'advertisement', 'a word from our sponsor', 'our sponsor', 'partner message',
+    'from our partners', 'sponsored content',
+)
+# Phrases that identify house-keeping / promo paragraphs in newsletters.
+_NL_PROMO_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
+    r'add .{0,40} as a preferred source',
+    r'\bhit subscribe\b',
+    r'\bsubscribe\b.{0,30}\bif you haven',
+    r'we strip stories off the jargon',
+    r'just one mail every morning',
+    r"if you'?re already a subscriber",
+    r"if you'?re someone who loves to keep tabs",
+    r'was this (?:email|newsletter) forwarded to you',
+    r'forward(?:ed)? this (?:email|newsletter|to a friend)',
+    r'share this with your friends',
+    r'\bjoin us on whatsapp\b',
+    r'upgrade to paid', r'become a paid subscriber',
+    r'click here to see what all of the hype is about',
+    r'learn how to apply now',
+    r'thank you for reading\.? do share',
+    r'how did you like (?:today|this)',
+    r'rate (?:today|this) (?:edition|newsletter)',
+))
+# Section headings after which everything (to the next <hr>/heading) is a footer.
+_NL_FOOTER_HEADINGS = (
+    'the team', 'written by', 'about the author', 'about us', 'credits',
+    'share the love', 'refer a friend', 'referral', 'feedback',
 )
 MINT_JUNK = _class_matcher(
     ('giftArticle', 'pTopic', 'alsoRead', 'manualbacklink', 'autobacklink',
@@ -258,6 +300,35 @@ def rss_articles(raw, max_age_days, url_sink=None, domain=None, want_content=Fal
     return out
 
 
+# Live Mint prefixes its RSS titles with a desk tag ("Mint Quick Edit | ...")
+# or the columnist's name ("Ajit Ranade: ..."). The desk tag is a real
+# sub-section (used below); the rest is noise in front of the headline.
+_MINT_DESK_RE = re.compile(
+    r'^\s*(?:mint\s+)?(quick edit|primer|explainer|snapview|long story|'
+    r'straight talk|top of mind|mark to market|for the record)\s*[|:–-]\s*',
+    re.IGNORECASE,
+)
+# leading "First Last: " / "First M. Last: " columnist byline
+_MINT_BYLINE_RE = re.compile(
+    r'^\s*((?:[A-Z][A-Za-z.’\'-]+\s+){1,3}[A-Z][A-Za-z.’\'-]+)\s*:\s+'
+    r'(?=[A-Z0-9“])'
+)
+
+
+def _mint_desk(title):
+    '''(sub-section label, cleaned title). Sub-section is None for a plain
+    opinion piece.'''
+    m = _MINT_DESK_RE.match(title or '')
+    desk = None
+    if m:
+        desk = m.group(1).title()
+        if desk.lower() == 'quick edit':
+            desk = 'Quick Edit'
+        title = title[m.end():]
+    title = _MINT_BYLINE_RE.sub('', title, count=1)
+    return desk, title.strip(' -–|').strip()
+
+
 def absurl(url, base):
     if url.startswith('/'):
         url = base + url
@@ -313,7 +384,7 @@ class DailyDigestBase(BasicNewsRecipe):
     ignore_duplicate_articles = {'title', 'url'}
     remove_empty_feeds = True
     resolve_internal_links = True
-    oldest_article = 1.25  # days (Live Mint RSS + Indian Express discovery)
+    oldest_article = 1.15  # days (Live Mint RSS + Indian Express discovery)
     recursions = 0
     timeout = 45  # bound each fetch; archived Indian Express images can be slow
     masthead_url = 'https://www.thehindu.com/theme/images/th-online/thehindu-logo.svg'
@@ -589,6 +660,56 @@ class DailyDigestBase(BasicNewsRecipe):
                 out.append((section, articles))
         return out
 
+    # The Hindu print edition's opinion page ("TH_Edit") is one flat bucket of
+    # ~15 items -- editorials, lead, op-ed, letters, the daily quiz. There is no
+    # sub-section field on the todays-paper JSON or the article pages, so the
+    # sub-section is recovered by matching each headline against The Hindu's own
+    # per-section RSS feeds (real web addresses), with a couple of exact-title
+    # rules for the pieces those feeds don't carry.
+    HINDU_OPINION_FEEDS = (
+        ('Editorials', 'https://www.thehindu.com/opinion/editorial/feeder/default.rss'),
+        ('Lead', 'https://www.thehindu.com/opinion/lead/feeder/default.rss'),
+        ('Op-Ed', 'https://www.thehindu.com/opinion/op-ed/feeder/default.rss'),
+        ('Columns', 'https://www.thehindu.com/opinion/columns/feeder/default.rss'),
+        ('Interview', 'https://www.thehindu.com/opinion/interview/feeder/default.rss'),
+    )
+
+    @staticmethod
+    def _hkey(title):
+        return tuple(re.sub(r'[^a-z0-9 ]', ' ', (title or '').lower()).split())
+
+    def _hindu_subsections(self):
+        if getattr(self, '_hindu_submap', None) is not None:
+            return self._hindu_submap
+        submap = {}
+        for label, feurl in self.HINDU_OPINION_FEEDS:
+            try:
+                raw = self.index_to_soup(feurl, raw=True)
+            except Exception as e:
+                self.log.warn('The Hindu %s feed: %s' % (label, e))
+                continue
+            for e in _feed_entries(raw):
+                k = self._hkey(e['title'])
+                # skip non-English (the lead feed carries Hindi items)
+                if len(k) >= 2 and re.search('[a-z]', e['title']):
+                    submap.setdefault(k[:6], label)
+        self._hindu_submap = submap
+        return submap
+
+    def _hindu_label(self, headline):
+        k = self._hkey(headline)
+        if k[:3] == ('letters', 'to', 'the') or k[:2] == ('letters', 'to'):
+            return 'Letters'
+        if k[:3] == ('the', 'daily', 'quiz') or k[:3] == ('know', 'your', 'english'):
+            return 'Quiz & Language'
+        for key, label in self._hindu_subsections().items():
+            if key[:len(k)] == k or k[:len(key)] == key:
+                return label
+        return 'Opinion'
+
+    HINDU_SECTION_ORDER = ('Editorials', 'Lead', 'Op-Ed', 'Columns', 'Interview',
+                           'Opinion', 'Letters', 'Quiz & Language', 'Science')
+
     def parse_hindu(self):
         base = 'https://www.thehindu.com'
         edition = 'th_delhi'
@@ -606,23 +727,39 @@ class DailyDigestBase(BasicNewsRecipe):
                 section = sec.replace('TH_', '').replace('_', ' ').strip()
                 if not self._wanted(section, HINDU_EXTRA_KEYS):
                     continue
+                is_science = 'science' in section.lower()
                 for item in data[sec]:
                     a_url = absurl(item['href'], base)
                     self._url_domain[a_url] = 'hindu'
                     desc = 'Page no.' + item.get('pageno', '') + ' | ' + (
                         item.get('teaser_text') or '')
-                    feeds_dict[section].append({
+                    label = ('Science' if is_science
+                             else self._hindu_label(item['articleheadline']))
+                    feeds_dict[label].append({
                         'title': item['articleheadline'],
                         'url': a_url,
                         'description': desc,
                     })
             break
-        return list(feeds_dict.items())
+        return [(k, feeds_dict[k]) for k in self.HINDU_SECTION_ORDER
+                if feeds_dict.get(k)] + \
+               [(k, v) for k, v in feeds_dict.items()
+                if k not in self.HINDU_SECTION_ORDER]
 
     def parse_livemint(self):
         raw = self.index_to_soup('https://www.livemint.com/rss/opinion', raw=True)
         articles = rss_articles(raw, self.oldest_article, self._url_domain, 'mint')
-        return [('Opinion', articles)]
+        # Mint's opinion feed has no sub-section field and rewrites every URL to
+        # /opinion/online-views/, so the only taxonomy it exposes is the desk
+        # tag in the headline. Split "Quick Edit" out; tidy every title.
+        buckets = defaultdict(list)
+        for art in articles:
+            desk, clean = _mint_desk(art['title'])
+            art['title'] = clean or art['title']
+            buckets[desk or 'Opinion'].append(art)
+        order = ['Opinion', 'Quick Edit', 'Primer', 'Explainer']
+        return [(k, buckets[k]) for k in order if buckets.get(k)] + \
+               [(k, v) for k, v in buckets.items() if k not in order]
 
     # ---- Indian Express via Google News discovery + Wayback Machine fetch ----
     def _http_get(self, url, data=None):
@@ -944,29 +1081,149 @@ class DailyDigestBase(BasicNewsRecipe):
         return soup
 
     # --- per-source cleaners --------------------------------------------- #
+    @staticmethod
+    def _norm_txt(s):
+        return re.sub(r'\s+', ' ', (s or '')).strip()
+
     def _clean_newsletter(self, soup):
         for x in soup.findAll(attrs={'class': NL_JUNK}):
             x.extract()
+        for x in soup.findAll(attrs={'class': NL_JUNK_EXTRA}):
+            x.extract()
+        for tag in soup.findAll(['form', 'button', 'iframe', 'script', 'style',
+                                 'source']):
+            tag.extract()
+        for img in soup.findAll('img', attrs={'width': '1'}):
+            img.extract()
         for a in soup.findAll('a'):
             if self.tag_to_string(a).strip().lower() in (
                     'subscribe', 'subscribe now', 'share', 'read online',
                     'view in browser', 'unsubscribe', 'upgrade to paid'):
                 a.extract()
-        for img in soup.findAll('img', attrs={'width': '1'}):
-            img.extract()
-        for tag in soup.findAll(['form', 'button', 'iframe', 'script', 'style']):
-            tag.extract()
+
+        # obvious ad-network / house-ad images
+        for img in soup.findAll('img'):
+            src = (img.get('src') or '').lower()
+            if any(k in src for k in (
+                    'nl_banner', 'nl-banner', '/ad/', '/ads/', 'adcreative',
+                    'ad_banner', '/sponsor', 'doubleclick', 'preferred-source',
+                    'preferredsource')):
+                (img.find_parent(['figure', 'p']) or img).extract()
+
+        self._strip_ad_blocks(soup)
+
+        # collapse a wrapper left holding nothing but whitespace
+        for d in soup.findAll(['div', 'section']):
+            if not self._norm_txt(self.tag_to_string(d)) and not d.find('img'):
+                d.extract()
+
+    def _strip_ad_blocks(self, soup):
+        '''Drop sponsor slots, subscribe boilerplate and the trailing footer
+        from an embedded newsletter, without touching article prose. Only short
+        block elements are considered, and a sponsor/footer heading removes
+        just its own run (up to the next <hr> or heading).'''
+        block_tags = ('p', 'div', 'section', 'table', 'li', 'aside', 'figure',
+                      'blockquote')
+        heading_tags = ('h1', 'h2', 'h3', 'h4', 'h5', 'h6')
+
+        # 1. heading markers -> remove the heading and its following run
+        for el in list(soup.findAll(heading_tags + ('p', 'strong', 'a'))):
+            if el.parent is None:
+                continue
+            t = self._norm_txt(self.tag_to_string(el)).lower().strip(' :·—-')
+            if not t or len(t) > 60:
+                continue
+            is_ad = any(t == m or t.startswith(m) for m in _NL_AD_MARKERS)
+            is_foot = t in _NL_FOOTER_HEADINGS
+            if not (is_ad or is_foot):
+                continue
+            anchor = el if el.name in heading_tags else (el.parent or el)
+            for sib in list(anchor.find_next_siblings()):
+                nm = getattr(sib, 'name', None)
+                if nm == 'hr' or (is_ad and nm in heading_tags):
+                    if nm == 'hr':
+                        sib.extract()
+                    break
+                sib.extract()
+            anchor.extract()
+
+        # 2. short promo / CTA paragraphs anywhere in the body
+        for el in list(soup.findAll(block_tags)):
+            if el.parent is None or el.find(block_tags):
+                continue  # only leaf blocks
+            txt = self._norm_txt(self.tag_to_string(el))
+            if not txt or len(txt) > 320:
+                continue
+            if any(r.search(txt) for r in _NL_PROMO_RES):
+                el.extract()
+
+    _STOCK_CREDIT = (r'wikimedia\s*commons|wikipedia|creative\s*commons|'
+                     r'public\s*domain|pixabay|unsplash|pexels|flickr|istock|'
+                     r'getty\s*images|shutterstock|freepik')
+    # caption/alt that is *only* a stock credit
+    _CREDIT_ONLY_RE = re.compile(
+        r'^(?:photo|image|pic|illustration)?\s*[:\-]?\s*(?:%s)[\w .]*\.?$'
+        % _STOCK_CREDIT, re.IGNORECASE)
+    # a stock credit tacked on the end of a longer alt/caption
+    _CREDIT_TAIL_RE = re.compile(r'(?:%s)[\w ]*\s*$' % _STOCK_CREDIT, re.IGNORECASE)
+    # free-media credits => the image is decorative filler (quiz / explainer
+    # clip-art), safe to drop. Wire-service credits (Getty/AP/PTI/Reuters) are
+    # left alone -- those sit on real news photos.
+    _FILLER_CREDIT_RE = re.compile(
+        r'(?:wikimedia\s*commons|wikipedia|creative\s*commons|public\s*domain)'
+        r'[\w ]*\s*$', re.IGNORECASE)
+    # slideshow position counter used as alt text ("1 of 2")
+    _SLIDE_ALT_RE = re.compile(r'^\s*\d+\s+of\s+\d+\s*$', re.IGNORECASE)
+    _HINDU_BODY_SELECTORS = (
+        {'class': 'article-section'},
+        {'itemprop': 'articleBody'},
+        {'class': lambda c: c and 'articlebodycontent' in c},
+        {'id': lambda i: i and i.startswith('content-body-')},
+    )
 
     def _clean_hindu(self, soup):
-        self._trim_to(soup, soup.find(attrs={'class': 'article-section'}))
+        body = None
+        for sel in self._HINDU_BODY_SELECTORS:
+            body = soup.find(attrs=sel)
+            if body is not None:
+                break
+        self._trim_to(soup, body)
         for x in soup.findAll(attrs={'class': HINDU_JUNK}):
             x.extract()
+        for tag in soup.findAll(['source', 'button', 'svg']):
+            tag.extract()
+        # ad slots + the todays-paper photo-gallery / slideshow wrapper
+        for x in soup.findAll(attrs={'id': lambda i: i and i.startswith((
+                'photo-gallery', 'Desktop_', 'Mweb_', 'MWeb_', 'div-gpt',
+                'arthardpv', 'artproduct'))}):
+            x.extract()
+        # slideshow-counter / bare-credit captions (div.caption or p.caption)
+        for cap in soup.findAll(attrs={'class': 'caption'}):
+            t = self._norm_txt(self.tag_to_string(cap))
+            if (not t or self._SLIDE_ALT_RE.match(t)
+                    or self._CREDIT_ONLY_RE.match(t)
+                    or self._FILLER_CREDIT_RE.search(t)):
+                cap.extract()
         for cap in soup.findAll('p', attrs={'class': 'caption'}):
             cap.name = 'figcaption'
         for img in soup.findAll('img', attrs={'data-original': True}):
             img['src'] = img['data-original']
         for h3 in soup.findAll(**classes('sub-title')):
             h3.name = 'p'
+        # drop decorative / credit-only / slideshow images
+        for fig in soup.findAll('figure'):
+            cap = fig.find(['figcaption', 'figCaption'])
+            if cap is not None and self._CREDIT_ONLY_RE.match(
+                    self._norm_txt(self.tag_to_string(cap))):
+                fig.extract()
+        for img in soup.findAll('img'):
+            alt = self._norm_txt(img.get('alt', ''))
+            if (self._CREDIT_ONLY_RE.match(alt) or self._SLIDE_ALT_RE.match(alt)
+                    or self._FILLER_CREDIT_RE.search(alt)):
+                (img.find_parent('figure') or img).extract()
+                continue
+            if alt:  # trim a trailing credit off an otherwise useful alt
+                img['alt'] = self._CREDIT_TAIL_RE.sub('', alt).strip(' .—-')
 
     def _clean_mint(self, soup):
         art = soup.find('article', attrs={
@@ -989,6 +1246,18 @@ class DailyDigestBase(BasicNewsRecipe):
             if self.tag_to_string(tag).strip().startswith(
                     ('Also Read', 'Also read', 'ALSO READ')):
                 tag.extract()
+        # "About the Author" + the byline blurb that follows it
+        for el in list(soup.findAll(['h2', 'h3', 'h4', 'strong', 'p', 'div'])):
+            if el.parent is None:
+                continue
+            t = self._norm_txt(self.tag_to_string(el)).lower().strip(' :')
+            if t in ('about the author', 'about the authors'):
+                for sib in list(el.find_next_siblings()):
+                    if getattr(sib, 'name', None) in (
+                            'h1', 'h2', 'h3', 'h4', 'hr'):
+                        break
+                    sib.extract()
+                el.extract()
         for h2 in soup.findAll('h2'):
             h2.name = 'h4'
         for img in soup.findAll('img', attrs={'data-src': True}):

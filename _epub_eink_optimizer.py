@@ -18,9 +18,10 @@ Ideas adapted from:
 CrossInk / CrossPoint compatibility (its EPUB parser is expat + a hand-written
 XHTML/CSS renderer on an ESP32 with ~380 KB usable RAM and a 4-level SSD1677
 panel), applied here:
-- every image -> baseline (never progressive) JPEG, quantised to the 4 panel
-  greys (0/85/170/255) with Floyd-Steinberg dithering, auto-contrast + a mild
-  boost, alpha flattened onto white, long edge <= 800 px
+- every image -> baseline (never progressive) JPEG, fit to the 480x800 panel,
+  mapped to the 4 panel greys (0/85/170/255), auto-contrast + a mild boost,
+  alpha flattened onto white
+- <picture><source> collapsed to the single <img>
 - PNGs kept as PNG but reduced to a 4-colour greyscale palette
 - image entries STORED (not deflated) in the zip so the firmware skips an
   inflate pass; mimetype still first and stored
@@ -131,7 +132,7 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base2*/"
+_CSS_BASE_MARKER = "/*eink-base3*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
@@ -143,6 +144,14 @@ _CSS_EINK_BASE = (
     + "-webkit-filter:grayscale(100%) !important;}"
     + "*{text-shadow:none !important;box-shadow:none !important;"
     + "background-image:none !important;}"
+    # calibre's inter-article nav bar (Prev/Articles/Sections/Next) renders
+    # huge on a 480px panel -- shrink it to a thin strip
+    + ".touchscreen_navbar,.touchscreen_navbar td,.touchscreen_navbar a,"
+    + ".calibre_navbar,.calibre_navbar a{font-size:55% !important;"
+    + "padding:0 2px !important;line-height:1.15 !important;border:0 !important;}"
+    + ".touchscreen_navbar,.calibre_navbar{margin:0 0 3px !important;"
+    + "border:0 !important;}"
+    + ".touchscreen_navbar hr,.calibre_navbar hr{display:none !important;}"
 )
 
 
@@ -567,6 +576,9 @@ _LIGATURES = {
     "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st",
 }
 _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
+# <picture><source ...> — the firmware only wants a single <img>; a leftover
+# <source> with a remote/responsive srcset can shadow it and render nothing
+_SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
 
 
 def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
@@ -582,6 +594,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _FOOTER_P_RE.sub("", new)
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
         new = _REMOTE_IMG_RE.sub("", new)
+        new = _SOURCE_RE.sub("", new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
