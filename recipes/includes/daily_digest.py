@@ -553,12 +553,14 @@ class DailyDigestBase(BasicNewsRecipe):
         d.line([X, 770, X + 190, 770], fill=ink, width=7)
 
         now = datetime.now()
-        left(880, now.strftime('%A'), self._cover_font(96, bold=True))
-        left(1000, now.strftime('%d %B %Y'),
-             fit(now.strftime('%d %B %Y'), 96, bold=True))
+        # small weekday over a big date
+        left(880, now.strftime('%A').upper(),
+             self._cover_font(52, bold=True), fill=faint)
+        left(946, now.strftime('%d %B %Y'),
+             fit(now.strftime('%d %B %Y'), 118, bold=True))
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
-        y = 1220
+        y = 1210
         for nm in weeklies:
             left(y, nm, fit(nm, 60, bold=False))
             y += 92
