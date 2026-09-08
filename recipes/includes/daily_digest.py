@@ -376,6 +376,9 @@ def chromium_get(storage, url, timeout=45):
 
 class DailyDigestBase(BasicNewsRecipe):
     title = _name + ' - ' + datetime.now().strftime('%d.%m.%y')
+    # calibre appends this to the title on conversion; empty => the shipped book
+    # is just "Daily Digest - dd.mm.yy" with no trailing " [Weekday, dd Mon YYYY]"
+    timefmt = ''
     __author__ = 'newsrack'
     description = (
         'Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, '
@@ -391,6 +394,8 @@ class DailyDigestBase(BasicNewsRecipe):
     ignore_duplicate_articles = {'title', 'url'}
     remove_empty_feeds = True
     resolve_internal_links = True
+    # section index lists article titles only -- no summary / first-paragraph blurb
+    summary_length = 0
     oldest_article = 1.15  # days (Live Mint RSS + Indian Express discovery)
     recursions = 0
     timeout = 45  # bound each fetch; archived Indian Express images can be slow
@@ -401,6 +406,18 @@ class DailyDigestBase(BasicNewsRecipe):
     # RSS-gateway workarounds. Subclass DailyDigestLive turns this on together
     # with browser_type='webengine' and low concurrency.
     chromium_first = False
+
+    # --- per-source on/off switches. Flip to False to drop a whole source from
+    # the digest (its section(s) simply don't appear). Live Mint and Business
+    # Standard are off for now.
+    fetch_newsletters = True
+    fetch_indian_express = True
+    fetch_hindu = True
+    fetch_livemint = False
+    fetch_business_standard = False
+
+    # individual newsletter feeds to skip, by name (see NEWSLETTER_FEEDS)
+    DISABLED_NEWSLETTERS = set()
 
     extra_css = '''
         img {display:block; margin:0 auto;
@@ -464,9 +481,11 @@ class DailyDigestBase(BasicNewsRecipe):
         return html
 
     # ------------------------------------------------------------------ cover
-    # canvas is 3:5 -- the Xteink X4 / X4 Pro panel is 480x800; the e-ink
-    # optimizer downsizes this to fit. Rendered large for clean anti-aliasing.
-    _COVER_W, _COVER_H = 1200, 2000
+    # canvas is the standard ebook-cover 1:1.6 (like Amazon/KDP etc.), so the
+    # reader's library view shows no letterbox band. The e-ink optimizer
+    # downsizes it to fit the Xteink X4 480x800 panel. Rendered large for clean
+    # anti-aliasing.
+    _COVER_W, _COVER_H = 1200, 1920
 
     _COVER_FONT_DIRS = (
         _STATIC_DIR, 'static', 'recipes/static',
@@ -609,11 +628,12 @@ class DailyDigestBase(BasicNewsRecipe):
 
     # ------------------------------------------------------------------ index
     SOURCES = (
-        ('%s', 'parse_newsletters'),
-        ('Indian Express: %s', 'parse_indian_express'),
-        ('The Hindu: %s', 'parse_hindu'),
-        ('Live Mint: %s', 'parse_livemint'),
-        ('Business Standard: %s', 'parse_business_standard'),
+        ('%s', 'parse_newsletters', 'fetch_newsletters'),
+        ('Indian Express: %s', 'parse_indian_express', 'fetch_indian_express'),
+        ('The Hindu: %s', 'parse_hindu', 'fetch_hindu'),
+        ('Live Mint: %s', 'parse_livemint', 'fetch_livemint'),
+        ('Business Standard: %s', 'parse_business_standard',
+         'fetch_business_standard'),
     )
 
     def _run_source(self, name):
@@ -624,15 +644,18 @@ class DailyDigestBase(BasicNewsRecipe):
             return []
 
     def parse_index(self):
+        sources = [s for s in self.SOURCES if getattr(self, s[2], True)]
+        if not sources:
+            raise ValueError('Every source is disabled (fetch_* flags).')
         if self.parallel_sources and not self.chromium_first:
-            with ThreadPoolExecutor(max_workers=len(self.SOURCES)) as ex:
+            with ThreadPoolExecutor(max_workers=len(sources)) as ex:
                 results = list(ex.map(
-                    lambda s: self._run_source(s[1]), self.SOURCES))
+                    lambda s: self._run_source(s[1]), sources))
         else:
-            results = [self._run_source(s[1]) for s in self.SOURCES]
+            results = [self._run_source(s[1]) for s in sources]
 
         feeds = []
-        for (label, _), got in zip(self.SOURCES, results):
+        for (label, _, _), got in zip(sources, results):
             for section, articles in got:
                 if articles:
                     feeds.append((label % section, articles))
@@ -643,10 +666,14 @@ class DailyDigestBase(BasicNewsRecipe):
 
     # ----------------------------------------------------------- newsletters
     def parse_newsletters(self):
-        with ThreadPoolExecutor(max_workers=min(8, len(NEWSLETTER_FEEDS))) as ex:
+        nl_feeds = [t for t in NEWSLETTER_FEEDS
+                    if t[0] not in self.DISABLED_NEWSLETTERS]
+        if not nl_feeds:
+            return []
+        with ThreadPoolExecutor(max_workers=min(8, len(nl_feeds))) as ex:
             fetched = list(ex.map(
                 lambda t: (t, self._fetch_feed_safe(t[0], t[1])),
-                NEWSLETTER_FEEDS))
+                nl_feeds))
 
         out = []
         for (name, url, weekly), entries in fetched:

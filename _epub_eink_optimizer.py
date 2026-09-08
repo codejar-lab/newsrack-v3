@@ -153,9 +153,9 @@ _CSS_EINK_BASE = (
     + "h3{font-size:1.2em !important;}"
     # the inter-article nav (Prev/Articles/Sections/Next) is rebuilt as a
     # single compact line by _clean_html_files -- keep it tiny and quiet
-    + ".eink-nav{font-size:x-small !important;text-align:center !important;"
-    + "margin:2px 0 6px !important;color:#555 !important;}"
-    + ".eink-nav a{text-decoration:none !important;color:#555 !important;}"
+    + ".eink-nav{font-size:60% !important;text-align:center !important;"
+    + "margin:1px 0 4px !important;color:#666 !important;line-height:1.1 !important;}"
+    + ".eink-nav a{text-decoration:none !important;color:#666 !important;}"
     # in case a navbar table slips through unconverted
     + ".touchscreen_navbar,.calibre_navbar{font-size:x-small !important;"
     + "border:0 !important;margin:2px 0 !important;}"
@@ -645,11 +645,19 @@ def _shrink_navbar(m: "re.Match") -> str:
         label = re.sub(r"<[^>]+>", "", txt)
         label = re.sub(r"\s+", " ", label).strip()
         if label:
-            links.append('<a href="%s">%s</a>' % (href, label))
+            # inline styles too: CrossInk's renderer ignores the `.eink-nav a`
+            # descendant rule and the `x-small` keyword, so spell it out here
+            links.append(
+                '<a href="%s" style="text-decoration:none;color:#666">%s</a>'
+                % (href, label)
+            )
     if not links:
         return ""
-    return ('<p class="eink-nav"><small>' + " · ".join(links)
-            + "</small></p>")
+    return (
+        '<p class="eink-nav" style="font-size:60%;line-height:1.1;'
+        'text-align:center;margin:1px 0 4px;color:#666">'
+        + '<small>' + " · ".join(links) + "</small></p>"
+    )
 
 
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
