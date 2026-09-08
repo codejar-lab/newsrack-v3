@@ -8,6 +8,7 @@ from _recipe_utils import (
     onlyat_hours,
     onlyon_days,
     onlyon_weekdays,
+    xteink_conv_options,
 )
 
 # Define the categories display order, optional
@@ -26,6 +27,39 @@ recipes: List[Recipe] = [
         retry_attempts=1,
         overwrite_cover=False,
         enable_on=onlyat_hours(list(range(0, 9)), +5.5),
+    ),
+    Recipe(
+        recipe="india-opinion",
+        slug="india-opinion",
+        src_ext="epub",  # epub only, no mobi
+        target_ext=[],
+        category="Indian Newspapers",
+        retry_attempts=1,
+        # Indian Express articles are pulled through the Wayback Machine
+        # (on-demand captures), which is slow -- give it head room
+        timeout=1200,
+        overwrite_cover=False,
+        # build + post-process the epub for small e-ink readers (Xteink X3/X4/X4 Pro)
+        conv_options=xteink_conv_options,
+        optimize_for_eink=True,
+        # only recipe kept enabled -- always on so every CI run rebuilds it
+        enable_on=True,
+    ),
+    Recipe(
+        recipe="daily-digest-live",
+        slug="daily-digest-live",
+        src_ext="epub",
+        target_ext=[],
+        category="Indian Newspapers",
+        retry_attempts=1,
+        # WebEngine + serial downloads + on-demand Wayback captures are slow
+        timeout=1800,
+        overwrite_cover=False,
+        conv_options=xteink_conv_options,
+        optimize_for_eink=True,
+        # disabled by default -- india-opinion is the workhorse; enable this
+        # one where the deploy IP is not blocked and the direct fetch works
+        enable_on=False,
     ),
     Recipe(
         recipe="hindu",
@@ -459,3 +493,7 @@ recipes: List[Recipe] = [
         ),
     ),
 ]
+
+# Only the Daily Digest is active right now. Every other recipe above is kept
+# in the file for reference but excluded from the build.
+recipes = [r for r in recipes if r.recipe == "india-opinion"]

@@ -37,7 +37,9 @@ xteink_conv_options: Dict[str, List[str]] = {
         "-vvv",
         "--extra-css=img{height:auto !important;}",
         "--font-size-mapping=8,10,12,14,16,18,20,22",
-        "--epub-max-image-size=800x480",
+        # cap at the panel's long edge both ways; _epub_eink_optimizer.py then
+        # clamps content images to 800x480 and keeps the cover portrait
+        "--epub-max-image-size=800x800",
         "--no-svg-cover",
         "--filter-css=color,background,background-color",
     ],

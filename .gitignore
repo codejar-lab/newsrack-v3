@@ -17,6 +17,9 @@ output/
 eink_test_output/
 test_output/
 
+# locally downloaded python wheels / sdists (calibre, numpy, scipy, sklearn, ...)
+*.whl
+
 # Node #
 # Dependency directories
 node_modules/
