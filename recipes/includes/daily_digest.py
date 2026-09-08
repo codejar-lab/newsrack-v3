@@ -433,88 +433,119 @@ class DailyDigestBase(BasicNewsRecipe):
         return html
 
     # ------------------------------------------------------------------ cover
+    # canvas is 3:5 -- the Xteink X4 / X4 Pro panel is 480x800; the e-ink
+    # optimizer downsizes this to fit. Rendered large for clean anti-aliasing.
+    _COVER_W, _COVER_H = 1200, 2000
+
+    _COVER_FONT_DIRS = (
+        'static', 'recipes/static',
+        '/usr/share/fonts/truetype/dejavu',
+        '/usr/share/fonts/truetype/liberation',
+        '/usr/share/fonts/truetype/liberation2',
+        '/usr/share/fonts/truetype/noto',
+        '/usr/share/fonts/opentype/noto',
+        '/usr/share/fonts/TTF', '/Library/Fonts',
+    )
+    _COVER_FONT_FILES = {
+        ('serif', True): ('LiberationSerif-Bold.ttf', 'NotoSerif-Bold.ttf',
+                          'DejaVuSerif-Bold.ttf', 'OpenSans-Bold.ttf'),
+        ('serif', False): ('LiberationSerif-Regular.ttf', 'NotoSerif-Regular.ttf',
+                           'DejaVuSerif.ttf', 'OpenSans-Regular.ttf'),
+        ('sans', True): ('OpenSans-Bold.ttf', 'DejaVuSans-Bold.ttf',
+                         'LiberationSans-Bold.ttf', 'NotoSans-Bold.ttf'),
+        ('sans', False): ('OpenSans-Regular.ttf', 'DejaVuSans.ttf',
+                          'LiberationSans-Regular.ttf', 'NotoSans-Regular.ttf'),
+    }
+
+    def _cover_font(self, size, bold=True, serif=False):
+        key = ('serif' if serif else 'sans', bold, size)
+        if key in self._font_cache:
+            return self._font_cache[key]
+        from PIL import ImageFont
+        f = None
+        for fdir in self._COVER_FONT_DIRS:
+            for name in self._COVER_FONT_FILES[key[:2]]:
+                try:
+                    f = ImageFont.truetype(os.path.join(fdir, name), size)
+                    break
+                except OSError:
+                    continue
+            if f:
+                break
+        if f is None:
+            f = ImageFont.load_default()
+        self._font_cache[key] = f
+        return f
+
     def default_cover(self, cover_file):
-        '''Title + a big date. Any weekly / occasional newsletter that made it
-        into this edition is named underneath; the daily sources are not.'''
+        '''A spare black-on-off-white cover sized for the Xteink X4 panel:
+        "DAILY DIGEST" over the day and date, any weekly newsletter in this
+        edition listed below, a soft grey motif bottom-left and a small
+        IDEAS / PEOPLE / PROGRESS tag bottom-right.'''
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
         except ImportError:
             return False
 
-        W, H = 1400, 1900
-        bg, fg, accent = '#f7f5f0', '#1a1a1a', '#8a1c1c'
+        W, H = self._COVER_W, self._COVER_H
+        bg, ink, faint = '#f4f3ef', '#111111', '#3a3a3a'
         img = Image.new('RGB', (W, H), bg)
         d = ImageDraw.Draw(img)
+        M = 90                       # inner border margin
+        X = 150                      # left text column
 
-        font_dirs = (
-            'static', 'recipes/static',
-            '/usr/share/fonts/truetype/dejavu',
-            '/usr/share/fonts/truetype/liberation',
-            '/usr/share/fonts/truetype/liberation2',
-            '/usr/share/fonts/truetype/noto',
-            '/usr/share/fonts/opentype/noto',
-            '/usr/share/fonts/TTF', '/Library/Fonts',
-        )
-        font_files = {
-            True: ('OpenSans-Bold.ttf', 'DejaVuSerif-Bold.ttf',
-                   'DejaVuSans-Bold.ttf', 'LiberationSerif-Bold.ttf',
-                   'LiberationSans-Bold.ttf', 'NotoSerif-Bold.ttf'),
-            False: ('OpenSans-Regular.ttf', 'DejaVuSerif.ttf', 'DejaVuSans.ttf',
-                    'LiberationSerif-Regular.ttf', 'NotoSerif-Regular.ttf'),
-        }
-
-        def font(size, bold=True):
-            key = (bold, size)
-            if key in self._font_cache:
-                return self._font_cache[key]
-            f = None
-            for fdir in font_dirs:
-                for name in font_files[bold]:
-                    try:
-                        f = ImageFont.truetype(os.path.join(fdir, name), size)
-                        break
-                    except OSError:
-                        continue
-                if f:
-                    break
-            if f is None:
-                f = ImageFont.load_default()
-            self._font_cache[key] = f
-            return f
-
-        def fit(text, size, bold=True, max_w=W - 240):
-            while size > 12:
-                f = font(size, bold)
+        def fit(text, size, bold=True, serif=False, max_w=W - X - 155):
+            while size > 14:
+                f = self._cover_font(size, bold, serif)
                 if d.textlength(text, font=f) <= max_w:
                     return f
-                size -= 4
-            return font(size, bold)
+                size -= 6
+            return self._cover_font(size, bold, serif)
 
-        def centered(y, text, f, fill=fg):
-            w = d.textlength(text, font=f)
-            d.text(((W - w) / 2, y), text, font=f, fill=fill)
+        def left(y, text, f, fill=ink):
+            d.text((X, y), text, font=f, fill=fill)
 
-        d.rectangle([70, 70, W - 70, H - 70], outline=accent, width=6)
+        # overlapping discs, lower-left, clipped inside the border frame. Flat
+        # greys chosen to land on the two mid tones of a 4-level e-ink panel
+        # (light ~ 170, the smaller accent ~ 85) after quantisation.
+        motif = img.copy()
+        md = ImageDraw.Draw(motif)
+        for (cx, cy, r, g) in ((M + 140, H - M - 300, 210, 170),
+                               (M + 250, H - M - 170, 175, 170),
+                               (M + 95, H - M - 140, 140, 120)):
+            md.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(g, g, g))
+        mask = Image.new('L', (W, H), 0)
+        ImageDraw.Draw(mask).rectangle(
+            [M + 2, M + 2, W - M - 2, H - M - 2], fill=255)
+        img.paste(motif, (0, 0), mask)
+        d = ImageDraw.Draw(img)
 
-        centered(300, 'DAILY', fit('DAILY', 180))
-        centered(520, 'DIGEST', fit('DIGEST', 180))
-        d.line([170, 800, W - 170, 800], fill=accent, width=5)
+        d.rectangle([M, M, W - M, H - M], outline=ink, width=4)
+
+        left(190, 'DAILY', fit('DAILY', 230, serif=True))
+        left(440, 'DIGEST', fit('DIGEST', 230, serif=True))
+        d.line([X, 770, X + 190, 770], fill=ink, width=7)
 
         now = datetime.now()
-        centered(920, now.strftime('%A'), font(72, bold=False))
-        date_str = now.strftime('%d %B %Y')
-        centered(1010, date_str, fit(date_str, 130))
+        left(880, now.strftime('%A'), self._cover_font(96, bold=True))
+        left(1000, now.strftime('%d %B %Y'),
+             fit(now.strftime('%d %B %Y'), 96, bold=True))
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
-        if weeklies:
-            d.line([320, 1290, W - 320, 1290], fill=accent, width=3)
-            centered(1340, 'This edition also includes', font(46, bold=False))
-            y = 1430
-            for nm in weeklies:
-                centered(y, nm, font(60))
-                y += 100
+        y = 1220
+        for nm in weeklies:
+            left(y, nm, fit(nm, 60, bold=False))
+            y += 92
 
-        img.save(cover_file, 'JPEG', quality=90)
+        tag_f = self._cover_font(44, bold=False)
+        ty = H - M - 60 - 3 * 78
+        for word in ('IDEAS', 'PEOPLE', 'PROGRESS'):
+            s = ' '.join(word)
+            w = d.textlength(s, font=tag_f)
+            d.text((W - M - 60 - w, ty), s, font=tag_f, fill=faint)
+            ty += 78
+
+        img.save(cover_file, 'JPEG', quality=92)
         cover_file.flush()
         return True
 
@@ -575,7 +606,7 @@ class DailyDigestBase(BasicNewsRecipe):
                         c += '<!--' + ' ' * pad + '-->'
                     art['content'] = c
                 arts.append(art)
-            out.append(('Newsletter: ' + name, arts))
+            out.append(('NL: ' + name, arts))
         return out
 
     def _fetch_feed(self, name, url):
