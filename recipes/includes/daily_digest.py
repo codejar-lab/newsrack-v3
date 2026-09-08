@@ -483,35 +483,39 @@ class DailyDigestBase(BasicNewsRecipe):
         return f
 
     def _cover_motif(self, img, M):
-        '''Paint the newspaper glyph in the lower-left, clipped to the frame.
-        Falls back to a soft grey disc if the emoji font is unavailable.'''
+        '''Paint the newspaper glyph in the lower-left. Positioned from the
+        glyph's real bbox so it sits fully inside the frame with clear space
+        below -- nothing touches the bottom edge. Falls back to a grey disc
+        if the emoji font is unavailable.'''
         from PIL import Image, ImageDraw, ImageFont
         W, H = img.size
-        size = 380
-        layer = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        x, y = M + 20, H - M - size - 10
+        size = 300
+        bottom_gap = 150          # clear space between glyph and bottom border
+        left_pad = M + 28
+        d = ImageDraw.Draw(img)
+
         f = None
         for fdir in self._COVER_FONT_DIRS:
             try:
-                f = ImageFont.truetype(
-                    os.path.join(fdir, 'NotoEmoji.ttf'), size)
+                f = ImageFont.truetype(os.path.join(fdir, 'NotoEmoji.ttf'), size)
                 break
             except OSError:
                 continue
-        if f is not None:
-            try:
-                ld.text((x, y), '\U0001F4F0', font=f, fill=(60, 60, 60, 255))
-            except Exception:
-                f = None
         if f is None:
-            ld.ellipse([x, y + 40, x + size, y + size], fill=(150, 150, 150, 255))
-        mask = Image.new('L', (W, H), 0)
-        ImageDraw.Draw(mask).rectangle(
-            [M + 3, M + 3, W - M - 3, H - M - 3], fill=255)
-        img.paste(
-            Image.alpha_composite(img.convert('RGBA'), layer).convert('RGB'),
-            (0, 0), mask)
+            y0 = H - M - bottom_gap - size
+            d.ellipse([left_pad, y0, left_pad + size, y0 + size],
+                      fill=(150, 150, 150))
+            return
+
+        glyph = '\U0001F4F0'
+        try:
+            bx0, by0, bx1, by1 = f.getbbox(glyph)
+        except Exception:
+            bx0, by0, bx1, by1 = 0, 0, size, size
+        # place so the glyph's visible box bottom-left is at the target point
+        draw_x = left_pad - bx0
+        draw_y = (H - M - bottom_gap - by1)
+        d.text((draw_x, draw_y), glyph, font=f, fill=(55, 55, 55))
 
     def default_cover(self, cover_file):
         '''A spare black-on-off-white cover sized for the Xteink X4 panel:
@@ -566,7 +570,7 @@ class DailyDigestBase(BasicNewsRecipe):
             y += 92
 
         tag_f = self._cover_font(44, bold=False)
-        ty = H - M - 60 - 3 * 78
+        ty = H - M - 150 - 3 * 78
         for word in ('IDEAS', 'PEOPLE', 'PROGRESS'):
             s = ' '.join(word)
             w = d.textlength(s, font=tag_f)
