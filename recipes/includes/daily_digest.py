@@ -9,8 +9,10 @@ import email.utils
 import json
 import os
 import re
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from urllib.parse import quote
 
@@ -411,6 +413,13 @@ class DailyDigestBase(BasicNewsRecipe):
         em, blockquote {color:#202020;}
     '''
 
+    # parse_index fans the five sources out across threads (unless the Chromium
+    # transport is in play -- that path wants low request pressure and its
+    # scraper worker is single-use). Shared mutable state (_url_domain,
+    # _weekly_newsletters, the Chromium worker) is guarded by _lock; every
+    # network fetch in a worker uses its own cloned browser.
+    parallel_sources = True
+
     def __init__(self, *args, **kwargs):
         BasicNewsRecipe.__init__(self, *args, **kwargs)
         self._url_domain = {}
@@ -422,13 +431,30 @@ class DailyDigestBase(BasicNewsRecipe):
         self._weekly_newsletters = []  # filled by parse_index, shown on cover
         self._font_cache = {}
         self._scraper_storage = []  # calibre.scraper.simple worker cache
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------- fetch helpers
+    def _set_domain(self, url, dom):
+        with self._lock:
+            self._url_domain[url] = dom
+
+    def _open_bytes(self, url, data=None, timeout=60):
+        '''Fetch `url` on a *cloned* browser -- safe to call from several
+        parse_index workers at once (self.browser is not thread-safe).'''
+        br = self.clone_browser(self.browser)
+        req = mechanize.Request(url, data=data, headers={
+            'User-Agent': GNEWS_UA,
+            'Accept-Language': 'en-IN,en;q=0.9',
+        })
+        return br.open_novisit(req, timeout=timeout).read()
 
     def _chromium_get(self, url, timeout=45):
         '''Chromium fetch, or None if it is blocked / errors / isn't wanted.'''
         if not self.chromium_first:
             return None
         try:
-            html = chromium_get(self._scraper_storage, url, timeout)
+            with self._lock:  # the scraper worker is not concurrency-safe
+                html = chromium_get(self._scraper_storage, url, timeout)
         except Exception as e:
             self.log.warn('  Chromium fetch failed for %s: %s' % (url, e))
             return None
@@ -557,11 +583,11 @@ class DailyDigestBase(BasicNewsRecipe):
         d.line([X, 770, X + 190, 770], fill=ink, width=7)
 
         now = datetime.now()
-        # small weekday over a big date
-        left(880, now.strftime('%A').upper(),
-             self._cover_font(52, bold=True), fill=faint)
-        left(946, now.strftime('%d %B %Y'),
+        # big date with a small weekday under it
+        left(870, now.strftime('%d %B %Y'),
              fit(now.strftime('%d %B %Y'), 118, bold=True))
+        left(1002, now.strftime('%A').upper(),
+             self._cover_font(52, bold=True), fill=faint)
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
         y = 1210
@@ -582,20 +608,31 @@ class DailyDigestBase(BasicNewsRecipe):
         return True
 
     # ------------------------------------------------------------------ index
+    SOURCES = (
+        ('%s', 'parse_newsletters'),
+        ('Indian Express: %s', 'parse_indian_express'),
+        ('The Hindu: %s', 'parse_hindu'),
+        ('Live Mint: %s', 'parse_livemint'),
+        ('Business Standard: %s', 'parse_business_standard'),
+    )
+
+    def _run_source(self, name):
+        try:
+            return getattr(self, name)() or []
+        except Exception as e:
+            self.log.warn('Failed to fetch %s: %s' % (name, e))
+            return []
+
     def parse_index(self):
+        if self.parallel_sources and not self.chromium_first:
+            with ThreadPoolExecutor(max_workers=len(self.SOURCES)) as ex:
+                results = list(ex.map(
+                    lambda s: self._run_source(s[1]), self.SOURCES))
+        else:
+            results = [self._run_source(s[1]) for s in self.SOURCES]
+
         feeds = []
-        for label, fn in (
-            ('%s', self.parse_newsletters),
-            ('Indian Express: %s', self.parse_indian_express),
-            ('The Hindu: %s', self.parse_hindu),
-            ('Live Mint: %s', self.parse_livemint),
-            ('Business Standard: %s', self.parse_business_standard),
-        ):
-            try:
-                got = fn()
-            except Exception as e:
-                self.log.warn('Failed to fetch %s: %s' % (label % 'source', e))
-                got = []
+        for (label, _), got in zip(self.SOURCES, results):
             for section, articles in got:
                 if articles:
                     feeds.append((label % section, articles))
@@ -606,13 +643,13 @@ class DailyDigestBase(BasicNewsRecipe):
 
     # ----------------------------------------------------------- newsletters
     def parse_newsletters(self):
+        with ThreadPoolExecutor(max_workers=min(8, len(NEWSLETTER_FEEDS))) as ex:
+            fetched = list(ex.map(
+                lambda t: (t, self._fetch_feed_safe(t[0], t[1])),
+                NEWSLETTER_FEEDS))
+
         out = []
-        for name, url, weekly in NEWSLETTER_FEEDS:
-            try:
-                entries = self._fetch_feed(name, url)
-            except Exception as e:
-                self.log.warn('Newsletter %s: %s' % (name, e))
-                continue
+        for (name, url, weekly), entries in fetched:
             if not entries:
                 continue
             fresh = _within_window(entries, NEWSLETTER_MAX_AGE_DAYS)
@@ -621,11 +658,12 @@ class DailyDigestBase(BasicNewsRecipe):
                          % (name, NEWSLETTER_MAX_AGE_DAYS))
                 continue
             if weekly or _cadence_is_weekly(entries):
-                self._weekly_newsletters.append(name)
+                with self._lock:
+                    self._weekly_newsletters.append(name)
 
             arts = []
             for e in fresh:
-                self._url_domain[e['url']] = 'newsletter'
+                self._set_domain(e['url'], 'newsletter')
                 art = {'title': e['title'], 'url': e['url'],
                        'description': e['description']}
                 if e['date_str']:
@@ -641,14 +679,19 @@ class DailyDigestBase(BasicNewsRecipe):
             out.append(('NL: ' + name, arts))
         return out
 
+    def _fetch_feed_safe(self, name, url):
+        try:
+            return self._fetch_feed(name, url)
+        except Exception as e:
+            self.log.warn('Newsletter %s: %s' % (name, e))
+            return []
+
     def _fetch_feed(self, name, url):
         '''RSS feed body -> list of `_feed_entries` dicts. Tries: the direct
         fetch, then (if enabled) calibre's Chromium transport, then a public
         RSS-to-JSON gateway.'''
         try:
-            raw = self.index_to_soup(url, raw=True)
-            if isinstance(raw, bytes):
-                raw = raw.decode('utf-8', 'ignore')
+            raw = self._open_bytes(url).decode('utf-8', 'ignore')
             if '<item' in raw or '<entry' in raw:
                 return _feed_entries(raw)
             self.log.warn('Newsletter %s: direct feed was not RSS' % name)
@@ -704,8 +747,7 @@ class DailyDigestBase(BasicNewsRecipe):
     def parse_business_standard(self):
         today = datetime.today().strftime('%d-%m-%Y')
         url = 'https://apibs.business-standard.com/category/today-paper?sortBy=' + today
-        raw = self.index_to_soup(url, raw=True)
-        data = json.loads(raw)['data']
+        data = json.loads(self._open_bytes(url))['data']
         out = []
         for section in data:
             if section == 'EpaperImage' or not self._wanted(section):
@@ -713,7 +755,7 @@ class DailyDigestBase(BasicNewsRecipe):
             articles = []
             for article in data[section]:
                 a_url = 'https://www.business-standard.com' + article['article_url']
-                self._url_domain[a_url] = 'bs'
+                self._set_domain(a_url, 'bs')
                 articles.append({
                     'title': article['heading1'],
                     'description': article.get('sub_heading') or '',
@@ -742,21 +784,31 @@ class DailyDigestBase(BasicNewsRecipe):
         return tuple(re.sub(r'[^a-z0-9 ]', ' ', (title or '').lower()).split())
 
     def _hindu_subsections(self):
-        if getattr(self, '_hindu_submap', None) is not None:
-            return self._hindu_submap
-        submap = {}
-        for label, feurl in self.HINDU_OPINION_FEEDS:
+        with self._lock:
+            if getattr(self, '_hindu_submap', None) is not None:
+                return self._hindu_submap
+
+        def one(item):
+            label, feurl = item
             try:
-                raw = self.index_to_soup(feurl, raw=True)
+                return label, _feed_entries(self._open_bytes(feurl))
             except Exception as e:
                 self.log.warn('The Hindu %s feed: %s' % (label, e))
-                continue
-            for e in _feed_entries(raw):
+                return label, []
+
+        with ThreadPoolExecutor(
+                max_workers=len(self.HINDU_OPINION_FEEDS)) as ex:
+            fetched = list(ex.map(one, self.HINDU_OPINION_FEEDS))
+
+        submap = {}
+        for label, entries in fetched:
+            for e in entries:
                 k = self._hkey(e['title'])
                 # skip non-English (the lead feed carries Hindi items)
                 if len(k) >= 2 and re.search('[a-z]', e['title']):
                     submap.setdefault(k[:6], label)
-        self._hindu_submap = submap
+        with self._lock:
+            self._hindu_submap = submap
         return submap
 
     def _hindu_label(self, headline):
@@ -778,7 +830,8 @@ class DailyDigestBase(BasicNewsRecipe):
         edition = 'th_delhi'
         today = date.today().strftime('%Y-%m-%d')
         url = base + '/todays-paper/' + today + '/' + edition + '/'
-        soup = self.index_to_soup(url)
+        soup = self.index_to_soup(
+            self._open_bytes(url).decode('utf-8', 'ignore'))
         feeds_dict = defaultdict(list)
         for script in soup.findAll('script'):
             txt = self.tag_to_string(script)
@@ -793,7 +846,7 @@ class DailyDigestBase(BasicNewsRecipe):
                 is_science = 'science' in section.lower()
                 for item in data[sec]:
                     a_url = absurl(item['href'], base)
-                    self._url_domain[a_url] = 'hindu'
+                    self._set_domain(a_url, 'hindu')
                     desc = 'Page no.' + item.get('pageno', '') + ' | ' + (
                         item.get('teaser_text') or '')
                     label = ('Science' if is_science
@@ -810,8 +863,10 @@ class DailyDigestBase(BasicNewsRecipe):
                 if k not in self.HINDU_SECTION_ORDER]
 
     def parse_livemint(self):
-        raw = self.index_to_soup('https://www.livemint.com/rss/opinion', raw=True)
-        articles = rss_articles(raw, self.oldest_article, self._url_domain, 'mint')
+        raw = self._open_bytes('https://www.livemint.com/rss/opinion')
+        articles = rss_articles(raw, self.oldest_article)
+        for art in articles:
+            self._set_domain(art['url'], 'mint')
         # Mint's opinion feed has no sub-section field and rewrites every URL to
         # /opinion/online-views/, so the only taxonomy it exposes is the desk
         # tag in the headline. Split "Quick Edit" out; tidy every title.
@@ -826,12 +881,7 @@ class DailyDigestBase(BasicNewsRecipe):
 
     # ---- Indian Express via Google News discovery + Wayback Machine fetch ----
     def _http_get(self, url, data=None):
-        req = mechanize.Request(url, data=data, headers={
-            'User-Agent': GNEWS_UA,
-            'Accept-Language': 'en-IN,en;q=0.9',
-        })
-        return self.browser.open_novisit(req, timeout=60).read().decode(
-            'utf-8', 'ignore')
+        return self._open_bytes(url, data=data).decode('utf-8', 'ignore')
 
     def _gnews_decode(self, gid):
         '''Resolve a Google-News /rss/articles/<gid> id to the publisher url.'''
@@ -964,7 +1014,7 @@ class DailyDigestBase(BasicNewsRecipe):
                 page = self._chromium_get(e['url'], timeout=40)
                 if not page:
                     continue
-                self._url_domain[e['url']] = 'ie'
+                self._set_domain(e['url'], 'ie')
                 art = {'title': e['title'], 'url': e['url'],
                        'description': e['description'],
                        'content': '<div class="x-ie-direct">' + page + '</div>'}
@@ -1043,7 +1093,7 @@ class DailyDigestBase(BasicNewsRecipe):
             if not wb:
                 self.log.warn('  skipped (no archive): %s' % real)
                 continue
-            self._url_domain[wb] = 'ie'
+            self._set_domain(wb, 'ie')
             feeds_dict[section].append(
                 {'title': title, 'url': wb, 'description': ''})
         return list(feeds_dict.items())

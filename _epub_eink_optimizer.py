@@ -134,7 +134,7 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base3*/"
+_CSS_BASE_MARKER = "/*eink-base4*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
@@ -146,14 +146,19 @@ _CSS_EINK_BASE = (
     + "-webkit-filter:grayscale(100%) !important;}"
     + "*{text-shadow:none !important;box-shadow:none !important;"
     + "background-image:none !important;}"
-    # calibre's inter-article nav bar (Prev/Articles/Sections/Next) renders
-    # huge on a 480px panel -- shrink it to a thin strip
-    + ".touchscreen_navbar,.touchscreen_navbar td,.touchscreen_navbar a,"
-    + ".calibre_navbar,.calibre_navbar a{font-size:55% !important;"
-    + "padding:0 2px !important;line-height:1.15 !important;border:0 !important;}"
-    + ".touchscreen_navbar,.calibre_navbar{margin:0 0 3px !important;"
-    + "border:0 !important;}"
-    + ".touchscreen_navbar hr,.calibre_navbar hr{display:none !important;}"
+    # headings: solid black, a touch bigger than the reader's default
+    + "h1,h2,h3,h4,h5,h6{color:#000 !important;font-weight:bold !important;"
+    + "line-height:1.2 !important;}"
+    + "h1{font-size:1.7em !important;}h2{font-size:1.45em !important;}"
+    + "h3{font-size:1.2em !important;}"
+    # the inter-article nav (Prev/Articles/Sections/Next) is rebuilt as a
+    # single compact line by _clean_html_files -- keep it tiny and quiet
+    + ".eink-nav{font-size:x-small !important;text-align:center !important;"
+    + "margin:2px 0 6px !important;color:#555 !important;}"
+    + ".eink-nav a{text-decoration:none !important;color:#555 !important;}"
+    # in case a navbar table slips through unconverted
+    + ".touchscreen_navbar,.calibre_navbar{font-size:x-small !important;"
+    + "border:0 !important;margin:2px 0 !important;}"
 )
 
 
@@ -621,6 +626,31 @@ _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 # <source> with a remote/responsive srcset can shadow it and render nothing
 _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
 
+# calibre's Prev/Articles/Sections/Next nav renders as a big bordered <table>
+# on the device (its hand-written CSS ignores descendant selectors). Rebuild
+# each one as a single small centred line of links.
+_NAVBAR_RE = re.compile(
+    r'<(?:table|div)\b[^>]*\bclass="[^"]*(?:touchscreen_navbar|calibre_navbar)'
+    r'[^"]*"[^>]*>.*?</(?:table|div)>',
+    re.IGNORECASE | re.DOTALL,
+)
+_NAV_LINK_RE = re.compile(
+    r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
+)
+
+
+def _shrink_navbar(m: "re.Match") -> str:
+    links = []
+    for href, txt in _NAV_LINK_RE.findall(m.group(0)):
+        label = re.sub(r"<[^>]+>", "", txt)
+        label = re.sub(r"\s+", " ", label).strip()
+        if label:
+            links.append('<a href="%s">%s</a>' % (href, label))
+    if not links:
+        return ""
+    return ('<p class="eink-nav"><small>' + " · ".join(links)
+            + "</small></p>")
+
 
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
     """After JPEGs were rewritten as PNG, fix every reference to them: manifest
@@ -666,6 +696,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
         new = _REMOTE_IMG_RE.sub("", new)
         new = _SOURCE_RE.sub("", new)
+        new = _NAVBAR_RE.sub(_shrink_navbar, new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
