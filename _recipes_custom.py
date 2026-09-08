@@ -144,6 +144,20 @@ recipes: List[Recipe] = [
     ),
 
     Recipe(
+        recipe="inshorts",
+        slug="inshorts",
+        src_ext="epub",
+        target_ext=[],
+        category="Daily",
+        retry_attempts=1,
+        overwrite_cover=False,
+        # section-wise 60-word summaries, built + post-processed for the Xteink
+        conv_options=xteink_conv_options,
+        optimize_for_eink=True,
+        enable_on=True,
+    ),
+
+    Recipe(
         recipe="gujarat-samachar",
         slug="gujarat-samachar",
         src_ext="mobi",
@@ -494,6 +508,7 @@ recipes: List[Recipe] = [
     ),
 ]
 
-# Only the Daily Digest is active right now. Every other recipe above is kept
+# Only these recipes are active right now. Every other recipe above is kept
 # in the file for reference but excluded from the build.
-recipes = [r for r in recipes if r.recipe == "india-opinion"]
+_active = {"india-opinion", "inshorts"}
+recipes = [r for r in recipes if r.recipe in _active]
