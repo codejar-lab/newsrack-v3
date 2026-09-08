@@ -25,6 +25,7 @@ image, source name/url and timestamp, so the article body is assembled here and
 handed to calibre via the ``content`` key.
 '''
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
@@ -85,6 +86,13 @@ class Inshorts(BasicNewsRecipe):
     no_stylesheets = True
     remove_javascript = True
     remove_attributes = ['style', 'height', 'width']
+    # every card is built in full from Inshorts' JSON -- never download the
+    # article page (without this, calibre auto-fetches the url because the
+    # embedded text is under its ~2000-char "embedded content" threshold, and
+    # you get the whole inshorts.com page chrome instead of the card).
+    use_embedded_content = True
+    compress_news_images = True
+    scale_news_images = (600, 600)
     ignore_duplicate_articles = {'url'}
     remove_empty_feeds = True
     max_articles_per_feed = 20  # keep each section a lean scroll
@@ -99,8 +107,123 @@ class Inshorts(BasicNewsRecipe):
              filter:grayscale(100%) !important;
              -webkit-filter:grayscale(100%) !important;}
         .byline {font-size:small; color:#202020; margin:0 0 .6em;}
-        .src {font-size:small; color:#404040; margin-top:1em;}
     '''
+
+    # ------------------------------------------------------------------ cover
+    # standard 1:1.6 ebook-cover canvas (no letterbox band in the reader's
+    # library); the e-ink optimizer downscales it to the Xteink X4 panel.
+    _COVER_W, _COVER_H = 1200, 1920
+    _FONT_DIRS = tuple(p for p in (
+        # repo static/ -- recipes_includes is <repo>/recipes/includes
+        os.path.normpath(os.path.join(
+            os.environ.get('recipes_includes', ''), '..', '..', 'static'))
+        if os.environ.get('recipes_includes') else None,
+        'static', 'recipes/static',
+        '/usr/share/fonts/truetype/dejavu',
+        '/usr/share/fonts/truetype/liberation',
+    ) if p)
+    _FONT_FILES = {
+        True: ('OpenSans-Bold.ttf', 'DejaVuSans-Bold.ttf',
+               'LiberationSans-Bold.ttf'),
+        False: ('OpenSans-Regular.ttf', 'DejaVuSans.ttf',
+                'LiberationSans-Regular.ttf'),
+    }
+
+    def _cover_font(self, size, bold=True):
+        from PIL import ImageFont
+        cache = getattr(self, '_font_cache', None)
+        if cache is None:
+            cache = self._font_cache = {}
+        key = (size, bold)
+        if key not in cache:
+            f = None
+            for d in self._FONT_DIRS:
+                for name in self._FONT_FILES[bold]:
+                    try:
+                        f = ImageFont.truetype(os.path.join(d, name), size)
+                        break
+                    except OSError:
+                        continue
+                if f:
+                    break
+            cache[key] = f or ImageFont.load_default()
+        return cache[key]
+
+    def _cover_glyph(self, d, x, y, s, ink):
+        '''The Inshorts mark: a rounded square holding a 3x3 grid of dots
+        (top-left dot stretched into a bar), drawn in soft grey.'''
+        grey = (150, 150, 150)
+        r = int(s * 0.18)
+        try:
+            d.rounded_rectangle([x, y, x + s, y + s], radius=r,
+                                outline=grey, width=max(3, s // 30))
+        except AttributeError:  # very old PIL
+            d.rectangle([x, y, x + s, y + s], outline=grey, width=4)
+        pad = s * 0.22
+        gap = (s - 2 * pad) / 2
+        dot = s * 0.12
+        for row in range(3):
+            for col in range(3):
+                cx = x + pad + col * gap
+                cy = y + pad + row * gap
+                if row == 0 and col == 0:
+                    d.rounded_rectangle(
+                        [cx - dot / 2, cy - dot / 2,
+                         cx + gap + dot / 2, cy + dot / 2],
+                        radius=dot / 2, fill=grey)
+                elif not (row == 0 and col == 1):
+                    d.ellipse([cx - dot / 2, cy - dot / 2,
+                               cx + dot / 2, cy + dot / 2], fill=grey)
+
+    def default_cover(self, cover_file):
+        '''Spare black-on-off-white cover for the Xteink panel: "INSHORTS" over
+        the tagline, day + date, the dot-grid mark bottom-left.'''
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return False
+
+        W, H = self._COVER_W, self._COVER_H
+        bg, ink, faint = '#f4f3ef', '#111111', '#3a3a3a'
+        img = Image.new('RGB', (W, H), bg)
+        d = ImageDraw.Draw(img)
+        M, X = 90, 150
+
+        def fit(text, size, bold=True, max_w=W - 2 * X):
+            while size > 16:
+                f = self._cover_font(size, bold)
+                if d.textlength(text, font=f) <= max_w:
+                    return f
+                size -= 6
+            return self._cover_font(size, bold)
+
+        d.rectangle([M, M, W - M, H - M], outline=ink, width=4)
+
+        d.text((X, 250), 'INSHORTS', font=fit('INSHORTS', 250), fill=ink)
+        d.line([X, 560, X + 200, 560], fill=ink, width=7)
+        d.text((X, 600), 'stay informed',
+               font=self._cover_font(58, bold=False), fill=faint)
+
+        now = datetime.now()
+        d.text((X, 980), now.strftime('%d %B %Y'),
+               font=fit(now.strftime('%d %B %Y'), 120), fill=ink)
+        d.text((X, 1118), now.strftime('%A').upper(),
+               font=self._cover_font(54, bold=True), fill=faint)
+
+        g = 300
+        self._cover_glyph(d, X, H - M - 150 - g, g, ink)
+
+        tag_f = self._cover_font(44, bold=False)
+        ty = H - M - 150 - 2 * 78
+        for word in ('SHORT', 'SHARP', 'DAILY'):
+            s = ' '.join(word)
+            w = d.textlength(s, font=tag_f)
+            d.text((W - M - 60 - w, ty), s, font=tag_f, fill=faint)
+            ty += 78
+
+        img.save(cover_file, 'JPEG', quality=92)
+        cover_file.flush()
+        return True
 
     # ------------------------------------------------------------------ fetch
     def _get(self, url):
@@ -149,10 +272,10 @@ class Inshorts(BasicNewsRecipe):
                 timezone(timedelta(hours=5, minutes=30))).strftime(
                     '%d %b %Y, %I:%M %p IST')
 
-        # card only -- headline, byline, image, the 60-word short. No link to
-        # (and no fetch of) the publisher's full article page.
-        body = ['<h1>%s</h1>' % escape(title),
-                '<p class="byline">%s</p>' % escape(meta)]
+        # card only -- byline, image, the 60-word short. calibre prepends the
+        # article title as a heading, so no <h1> here. Nothing links to (or
+        # fetches) the publisher's full article page.
+        body = ['<p class="byline">%s</p>' % escape(meta)]
         if image:
             body.append('<img src="%s"/>' % escape(image, {'"': '&quot;'}))
         body.append('<p>%s</p>' % escape(content))
