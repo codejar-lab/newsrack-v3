@@ -325,7 +325,9 @@ class DailyDigestBase(BasicNewsRecipe):
     chromium_first = False
 
     extra_css = '''
-        img {display:block; margin:0 auto;}
+        img {display:block; margin:0 auto;
+             filter:grayscale(100%) !important;
+             -webkit-filter:grayscale(100%) !important;}
         .caption, .cap, #img-cap {font-size:small; text-align:center;}
         .author, .dateLine, .auth, .cat, .articleInfo {font-size:small; color:#202020;}
         .subhead, .subhead_lead, .bold {font-weight:bold;}

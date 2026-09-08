@@ -93,11 +93,16 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base*/"
+_CSS_BASE_MARKER = "/*eink-base2*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
-    + "img{max-width:100% !important;height:auto !important;}"
+    + "img{max-width:100% !important;height:auto !important;"
+    # belt-and-braces: even if a reader swaps in its own copy of an image, or
+    # this epub was built without the image pass (local test_recipe.sh), the
+    # renderer still shows it monochrome.
+    + "filter:grayscale(100%) !important;"
+    + "-webkit-filter:grayscale(100%) !important;}"
     + "*{text-shadow:none !important;box-shadow:none !important;"
     + "background-image:none !important;}"
 )
