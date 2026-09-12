@@ -78,8 +78,14 @@ What it does: fit images to 480×800, map to the 4 panel greys, **write content
 images as 2-bit PNG** (rewriting the OPF manifest + `<img>`/`url()` refs),
 strip embedded fonts / colour-shadow-animation CSS / scripts, remove calibre's
 download footer + off-device links, rebuild calibre's Prev/Articles/Sections/Next
-nav table as one small line, fold ligatures, drop OS artifacts, repackage with
-`mimetype` first + images stored.
+nav table as one small line, **rewrite the book-level index-of-feeds
+`<table class="toc">` and each feed's article list as a bulleted `<ul><li>`**
+(`_shrink_toc_table` / `_shrink_article_summary`, see below; the latter also
+drops calibre's own broken one-character article "summaries"), collapse runs
+of 2+ `<br>` down to one, **normalize every CSS rule's vertical margin so
+`margin-top` is always `0` and `margin-bottom` carries the full value**
+(`_normalize_margins`, see below), fold ligatures, drop OS artifacts,
+repackage with `mimetype` first + images stored.
 
 It is **idempotent**: a `/*eink-baseN*/` CSS marker and grey-palette/size
 early-returns mean re-running is a no-op. Bump the marker (`eink-base4` →
@@ -89,6 +95,126 @@ it up.
 **CrossInk CSS is limited** — its hand-written engine honours single-class and
 tag selectors + `!important`, but **ignores descendant combinators**
 (`.a .b {…}`). Fix device layout problems in the markup, not with clever CSS.
+
+**A run of 2+ `<br>` renders as a full extra blank line, not a small gap.**
+CrossInk's layout engine (`ChapterHtmlSlimParser::startNewTextBlock`, the
+`fromBrElement` / "empty `<br>` block" case) treats a second consecutive
+`<br>` landing on an already-empty `<br>`-created block as a deliberate
+scene/section break, and injects a full line height of blank space on top of
+the next block's own margin. That's correct for a real "\* \* \*" break, but
+newsletters (Zerodha's Daily Brief, Finshots, ...) routinely use `"<br><br>"`
+as a plain inline paragraph separator — on-device that reads as a huge,
+unintended gap between paragraphs. `_clean_html_files` collapses any run of
+2+ `<br>` to a single one (`_MULTI_BR_RE`) so it renders as an ordinary line
+break instead. A single `<br>` is unaffected (it only starts a new, normal
+block — the oversized-gap path needs a *second* `<br>` landing on that
+still-empty block). Don't try to "fix" this with margin/line-height CSS on
+the surrounding tags — see the descendant-selector limitation above; fix the
+`<br>` run itself, in the markup.
+
+**CrossInk does not collapse adjacent vertical margins.** A browser merges
+touching `margin-bottom` + `margin-top` into the larger of the two;
+`ChapterHtmlSlimParser::makePages` (and the equivalent code for `<hr>`) just
+adds both, in full, every time. An ordinary `p{margin:1em 0}` (top *and*
+bottom both 1em, completely unremarkable Calibre output) renders as a 2em gap
+between two paragraphs, and a paragraph → `<hr>` → heading transition (each
+with its own top+bottom margin) stacks into 3+ em of blank space — the
+"huge gap between paragraphs" bug. `_strip_css` → `_normalize_margins` fixes
+this at the CSS level: every rule's `margin`/`margin-top`/`margin-bottom` is
+rewritten so `margin-top` is always `0` and `margin-bottom` carries the
+larger/only original value (falling back to the old top value when no
+bottom was ever set) — the standard "spacing lives only in margin-bottom"
+convention used by any non-collapsing renderer (this is also why the emails
+you get from every SaaS product use it). `<hr>` isn't left bare: CrossInk's
+own `emitHorizontalRule` substitutes a sensible default (half a line height)
+whenever an hr's `margin-top` resolves to `0`, so zeroing it doesn't remove
+its gap, it just stops that gap from *adding* to the next element's own
+margin. This can't be done as a handful of added override rules in
+`_CSS_EINK_BASE` — Calibre's own per-element classes (`.calibre9`,
+`.calibre12`, ...) always win over a same-property bare-tag rule
+(`resolveStyle()` applies tag → class → tag.class in that fixed priority
+order, regardless of source order or `!important`), and those class names
+are arbitrary/regenerated on every build. The existing declared values have
+to be rewritten in place instead.
+
+**Links inside an HTML `<table>` are untappable on a CrossInk touch device
+(X4 Pro, Sticky) — don't emit one for anything meant to be tapped.**
+CrossInk's touch-tap hit-testing (`EpubReaderActivity::buildFootnoteTouchTargets`)
+only builds a tappable hit-box for links in ordinary paragraph/line content;
+a link rendered inside a `<table>` renders through a different page-layout
+path and gets a permanently zero-sized touch target there — visually
+present, silently untappable, and the tap falls through to an ordinary
+page-turn (looks like it "did nothing" or "reloaded the page"). This is
+fixable in firmware, but per explicit instruction that fix does not live in
+the CrossInk repo (see its own `AGENTS.md` > "Touch Input Gotchas") — instead
+every `<table>` that calibre generates with real navigation links in it gets
+rewritten here, in `_clean_html_files`, into a bulleted `<ul><li>` list: the
+per-article Prev/Articles/Sections/Next navbar table (`_shrink_navbar`,
+matches `class="touchscreen_navbar"` / `"calibre_navbar"`, still a single
+compact line, not a bulleted list — it's a breadcrumb, not a list of things)
+and the book-level index-of-feeds table (`_shrink_toc_table`, matches
+`class="toc"` → one `<li>` per section, its article count folded into the
+link itself as `Label [N]` so the whole thing — bullet, label, count — reads
+and taps as one unit; square brackets, not round, so it never gets confused
+for the "(some text)" that occasionally appears in a section's own label).
+CrossInk draws a real "•" bullet for every `<li>` regardless of CSS
+(`ChapterHtmlSlimParser`'s block-tag handling for `"li"`; `CssDisplay` has no
+`list-item` value, so this isn't CSS-driven, it's hardcoded per-`<li>`
+markup). If calibre/a future recipe ever adds another table with real links
+in it, it needs the same treatment here — don't assume a new table is
+automatically fine just because the known ones are handled.
+
+**Calibre's per-feed article-index "summary" is always garbage — drop it,
+don't try to fix it.** Each feed's own index page lists its articles as
+`<div class="article_summary"><a class="summary_headline" href="...">Title</a>
+<div class="summary_text">...</div></div>`; the `summary_text` is calibre's
+own truncation of the article's opening text down to a single character plus
+an ellipsis ("W…", "A…", "P…", ...) — a calibre/feed-parsing artifact in the
+upstream conversion, not something reachable from this repo's recipe code or
+fixable with CSS. `_shrink_article_summary` drops it entirely and rewrites
+each entry as a bare `<li><a href="...">Title</a></li>` (see above), grouped
+into one `<ul>` per feed by `_wrap_einklist_runs` (using a throwaway
+`class="einklist"` marker so the wrap only ever touches list items *this*
+function just created, never a real list an article's own body might
+contain).
+
+**Found and fixed: tapping an article's title sometimes landed on the book's
+main index (or a neighbouring feed) instead of opening that article.** Not a
+firmware bug and not a bad `href` (both were checked and ruled out first).
+The actual cause: `.eink-nav`'s `font-size:60%` never really shrinks anything
+on-device (dead CSS — see the CrossInk CSS-limits note above), so this
+"compact" breadcrumb renders at full body text size and can wrap across 2-3
+lines for a long feed name (e.g. "NL: The Daily Brief (Zerodha)"). Combined
+with CrossInk's fixed 48px minimum touch-target size
+(`TOUCH_FOOTNOTE_TARGET_SIZE`, which pads every link's tap zone ~24px on
+every side regardless of the link's own rendered height), the nav's own
+padded tap zone reached down far enough to overlap the very next link on the
+page (the first article title, or the heading right above it) — so a tap
+aimed at the article could land on "Sections" (or the neighbouring-feed
+link) in the nav instead. Confirmed live with scripted taps in the
+simulator, isolating clean single-tap repro cases (see git history for the
+`CROSSPOINT_SIM_INPUT_SCRIPT` sequences used) that showed the exact boundary
+moving as the fix below was applied — this is what "confirm it live" (the
+previous version of this note) actually turned up.
+
+Fixed with two changes to `_shrink_navbar`, neither touching firmware:
+1. **Truncate every nav label** to `_NAV_LABEL_MAX_LEN` (16) characters with
+   a trailing `…`, so the breadcrumb stays short regardless of the
+   underlying title length and is far less likely to wrap.
+2. **Frame the nav with a bare `<hr/>` on each side.** An `<hr>` has no
+   `href` (no touch target of its own to interfere with anything), but
+   CrossInk's `emitHorizontalRule` gives it a real default margin (half a
+   line height, each side) when none is set in CSS — genuine physical
+   separation from whatever precedes/follows, independent of the
+   truncation. This is what actually closed the gap: truncation alone
+   (shorter text, same margins) was not enough on its own to stop the
+   overlap, since the 48px minimum pad can still exceed a single short
+   line's own margin.
+
+If a similar "wrong destination" symptom shows up elsewhere (a different
+list, a different breadcrumb), suspect this same mechanism first — an
+undersized margin next to *any* link, not a href/navigation bug — before
+re-litigating firmware link resolution.
 
 ## Conventions
 
