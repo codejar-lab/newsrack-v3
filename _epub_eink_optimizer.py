@@ -562,6 +562,60 @@ def _minify_css(css: str) -> str:
     return css.strip()
 
 
+# CrossInk does not collapse adjacent vertical margins like a browser does --
+# ChapterHtmlSlimParser::makePages (and the equivalent <hr> code) just adds a
+# touching margin-bottom + margin-top together, in full, every time. Ordinary
+# Calibre CSS (e.g. p{margin:1em 0}, top *and* bottom both set) renders as a
+# gap between two paragraphs, and a paragraph -> <hr> -> heading transition
+# (margin-bottom 1em + hr's own top/bottom margin + heading's margin-top)
+# stacks into a visibly huge blank run. Rewrite every rule's margin so
+# margin-top is always 0 and margin-bottom carries the full original value
+# (falling back to the original top value when no bottom was set) -- the
+# same "spacing lives only in margin-bottom" convention used in HTML email/
+# print engines that don't collapse margins either. `<hr>` isn't left bare
+# either: CrossInk's own emitHorizontalRule() substitutes a sensible default
+# (half a line height) whenever an hr's margin-top resolves to 0, so zeroing
+# it here doesn't remove its gap, it just stops it from being additive.
+_RULE_RE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_MARGIN_DECL_RE = re.compile(
+    r"margin(-top|-bottom|-left|-right)?:([^;]+);?", re.IGNORECASE
+)
+
+
+def _normalize_rule_margins(declarations: str) -> str:
+    top = bottom = None
+    kept: List[str] = []
+    for m in _MARGIN_DECL_RE.finditer(declarations):
+        side, value = m.group(1), m.group(2).strip()
+        if side is None:  # shorthand `margin: ...`
+            parts = value.split()
+            if len(parts) == 1:
+                top = bottom = parts[0]
+            elif len(parts) == 2:
+                top = bottom = parts[0]
+            elif len(parts) == 3:
+                top, bottom = parts[0], parts[2]
+            elif len(parts) >= 4:
+                top, bottom = parts[0], parts[2]
+        elif side.lower() == "-top":
+            top = value
+        elif side.lower() == "-bottom":
+            bottom = value
+        else:  # -left / -right: pass through untouched
+            kept.append(f"margin{side}:{value}")
+    if top is None and bottom is None:
+        return declarations  # no margin touched this rule at all
+    new_bottom = bottom if bottom is not None else top
+    rest = [p for p in _MARGIN_DECL_RE.sub("", declarations).split(";") if p]
+    return ";".join(rest + kept + ["margin-top:0", f"margin-bottom:{new_bottom}"])
+
+
+def _normalize_margins(css: str) -> str:
+    return _RULE_RE.sub(
+        lambda m: m.group(1) + "{" + _normalize_rule_margins(m.group(2)) + "}", css
+    )
+
+
 def _strip_css(csss: List[Path]) -> None:
     for css in csss:
         content = _read_text(css)
@@ -570,7 +624,9 @@ def _strip_css(csss: List[Path]) -> None:
         content = _FONT_FACE_RE.sub("", content)
         content = _DEAD_DECL_RE.sub("", content)
         content = _FONT_FAMILY_RE.sub("", content)
-        content = _minify_css(content) + "\n" + _CSS_EINK_BASE
+        content = _minify_css(content)
+        content = _normalize_margins(content)
+        content = content + "\n" + _CSS_EINK_BASE
         css.write_text(content, encoding="utf-8")
 
 
@@ -625,6 +681,17 @@ _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 # <picture><source ...> — the firmware only wants a single <img>; a leftover
 # <source> with a remote/responsive srcset can shadow it and render nothing
 _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
+
+# CrossInk's layout engine special-cases a lone empty block produced by a
+# <br> (ChapterHtmlSlimParser::startNewTextBlock, the `fromBrElement` /
+# `currentIsEmptyBr` path): it injects a *full extra line height* of blank
+# space on top of the next block's own margin, so a genuine scene break reads
+# clearly. Source newsletters (Zerodha's Daily Brief, Finshots, ...) instead
+# use "<br><br>" as a plain inline paragraph separator -- on CrossInk that
+# renders as a hugely oversized gap, not the small in-browser line break the
+# author intended. Collapse any run of 2+ <br> down to a single one so it's
+# an ordinary line break rather than a device-only "scene break".
+_MULTI_BR_RE = re.compile(r"(?:<br\b[^>]*/?>\s*){2,}", re.IGNORECASE)
 
 # calibre's Prev/Articles/Sections/Next nav renders as a big bordered <table>
 # on the device (its hand-written CSS ignores descendant selectors). Rebuild
@@ -704,6 +771,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
         new = _REMOTE_IMG_RE.sub("", new)
         new = _SOURCE_RE.sub("", new)
+        new = _MULTI_BR_RE.sub("<br/>", new)
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
