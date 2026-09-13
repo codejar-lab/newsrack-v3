@@ -602,15 +602,32 @@ class DailyDigestBase(BasicNewsRecipe):
         d.line([X, 770, X + 190, 770], fill=ink, width=7)
 
         now = datetime.now()
-        # big date with a small weekday under it (short month name so the
-        # larger font size still fits the column width)
-        left(870, now.strftime('%d %b %Y'),
-             fit(now.strftime('%d %b %Y'), 150, bold=True))
-        left(1032, now.strftime('%A').upper(),
-             self._cover_font(52, bold=True), fill=faint)
+        # big date with the weekday under it (short month name so the larger
+        # font size still fits the column width). `left(y, ...)` draws with y
+        # as the font's ascender line, not the glyph's own visible top/bottom
+        # -- at this date font size that gap is tens of pixels, so a fixed
+        # pixel offset between the two lines looks cramped or overlapping
+        # depending on font metrics. Measure each line's real rendered bbox
+        # with textbbox() and place the next line a fixed *visual* gap below
+        # it instead of guessing a raw y delta.
+        date_str = now.strftime('%d %b %Y')
+        date_y = 860
+        date_font = fit(date_str, 150, bold=True)
+        left(date_y, date_str, date_font)
+        date_bottom = d.textbbox((X, date_y), date_str, font=date_font)[3]
+
+        wk_str = now.strftime('%A').upper()
+        wk_font = self._cover_font(58, bold=True)
+        wk_gap = 34
+        # this font/size's own ascender-to-glyph-top offset, so the glyph's
+        # visible top (not the ascender line) lands `wk_gap` below date_bottom
+        wk_top_offset = d.textbbox((X, 0), wk_str, font=wk_font)[1]
+        wk_y = date_bottom + wk_gap - wk_top_offset
+        left(wk_y, wk_str, wk_font, fill=faint)
+        wk_bottom = d.textbbox((X, wk_y), wk_str, font=wk_font)[3]
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
-        y = 1210
+        y = wk_bottom + 100
         for nm in weeklies:
             left(y, nm, fit(nm, 60, bold=False))
             y += 92
