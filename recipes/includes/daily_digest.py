@@ -602,10 +602,11 @@ class DailyDigestBase(BasicNewsRecipe):
         d.line([X, 770, X + 190, 770], fill=ink, width=7)
 
         now = datetime.now()
-        # big date with a small weekday under it
-        left(870, now.strftime('%d %B %Y'),
-             fit(now.strftime('%d %B %Y'), 118, bold=True))
-        left(1002, now.strftime('%A').upper(),
+        # big date with a small weekday under it (short month name so the
+        # larger font size still fits the column width)
+        left(870, now.strftime('%d %b %Y'),
+             fit(now.strftime('%d %b %Y'), 150, bold=True))
+        left(1032, now.strftime('%A').upper(),
              self._cover_font(52, bold=True), fill=faint)
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
