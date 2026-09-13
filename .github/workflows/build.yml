@@ -5,7 +5,7 @@ on:
     branches:
       - '**'
   schedule:
-    - cron: "0 0 * * *"  # daily at 00:00 UTC == 05:30 IST
+    - cron: "0 18 * * *"  # daily at 18:00 UTC == 23:30 IST (6h earlier than the previous 00:00 UTC)
 
   workflow_dispatch:
     inputs:
