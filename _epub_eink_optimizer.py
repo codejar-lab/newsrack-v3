@@ -813,8 +813,20 @@ def _shrink_toc_table(m: "re.Match") -> str:
 # content. Drop it, and turn each entry into a real bulleted <li> (same
 # reasoning as _shrink_toc_table above): a plain <div> list item, one per
 # article, with no bullet or list semantics.
+# calibre always nests a <div class="summary_text"> *inside* the
+# article_summary div (see _shrink_article_summary's docstring below). A
+# naive non-greedy `(.*?)</div>` stops at the FIRST </div> it reaches, which
+# is that inner summary_text div's own close, not article_summary's -- the
+# true outer </div> is then left over, orphaned, corrupting the file's XHTML
+# (mismatched-tag parse error; confirmed with xml.dom.minidom against real
+# generator output). Explicitly consume the known inner div (its own content
+# excluded via a lookahead so group 1 can't swallow past it) before requiring
+# the real outer close.
 _ARTICLE_SUMMARY_RE = re.compile(
-    r'<div\b[^>]*\bclass="[^"]*\barticle_summary\b[^"]*"[^>]*>(.*?)</div>',
+    r'<div\b[^>]*\bclass="[^"]*\barticle_summary\b[^"]*"[^>]*>'
+    r'((?:(?!<div\b|</div>).)*)'
+    r'(?:<div\b[^>]*\bclass="[^"]*\bsummary_text\b[^"]*"[^>]*>.*?</div>\s*)?'
+    r'</div>',
     re.IGNORECASE | re.DOTALL,
 )
 _SUMMARY_LINK_RE = re.compile(

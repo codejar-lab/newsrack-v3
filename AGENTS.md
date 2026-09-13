@@ -178,6 +178,32 @@ into one `<ul>` per feed by `_wrap_einklist_runs` (using a throwaway
 function just created, never a real list an article's own body might
 contain).
 
+**`_ARTICLE_SUMMARY_RE` used to emit malformed XHTML (mismatched/orphaned
+`</div>`), breaking every generated feed-index page.** The regex was a naive
+`<div class="article_summary">(.*?)</div>` (non-greedy). But calibre always
+nests a second div *inside* it —
+`<div class="article_summary"><a class="summary_headline">Title</a>
+<div class="summary_text">...</div></div>` — and a non-greedy `.*?</div>`
+stops at the *first* `</div>` it reaches, which is that inner
+`summary_text` div's own close, not `article_summary`'s. The true outer
+`</div>` was then left over, orphaned, in the rewritten output: every single
+feed-index page (article count 1 or more, didn't matter) came out with one
+unmatched closing `</div>` per article. Confirmed with
+`xml.dom.minidom.parse()` against real generator output — every feed-index
+file failed with "mismatched tag." This is very likely what "the firmware
+says the epub is malformed" was pointing at: an EPUB reader's XML/XHTML
+parser will reasonably reject or misbehave on a file with mismatched tags.
+Fixed by explicitly matching the known inner `summary_text` div (its own
+content excluded from the outer capture group via a lookahead, so the
+capture can't accidentally swallow past it) before requiring the real outer
+close — see the regex itself for the exact pattern. **Whenever a regex here
+captures "everything up to the next `</tag>`" for an element that a source
+template might nest another same-named or same-shaped element inside,
+verify against real generator output with an XML parser (not just eyeballing
+one sample) before trusting it** — a non-greedy `.*?</div>` is only safe
+against a *flat* structure, and calibre's templates are not guaranteed to
+stay flat just because one sample looked that way.
+
 **Found and fixed: tapping an article's title sometimes landed on the book's
 main index (or a neighbouring feed) instead of opening that article.** Not a
 firmware bug and not a bad `href` (both were checked and ruled out first).
