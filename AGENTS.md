@@ -78,14 +78,8 @@ What it does: fit images to 480×800, map to the 4 panel greys, **write content
 images as 2-bit PNG** (rewriting the OPF manifest + `<img>`/`url()` refs),
 strip embedded fonts / colour-shadow-animation CSS / scripts, remove calibre's
 download footer + off-device links, rebuild calibre's Prev/Articles/Sections/Next
-nav table as one small line, **rewrite the book-level index-of-feeds
-`<table class="toc">` and each feed's article list as a bulleted `<ul><li>`**
-(`_shrink_toc_table` / `_shrink_article_summary`, see below; the latter also
-drops calibre's own broken one-character article "summaries"), collapse runs
-of 2+ `<br>` down to one, **normalize every CSS rule's vertical margin so
-`margin-top` is always `0` and `margin-bottom` carries the full value**
-(`_normalize_margins`, see below), fold ligatures, drop OS artifacts,
-repackage with `mimetype` first + images stored.
+nav table as one small line, fold ligatures, drop OS artifacts, repackage with
+`mimetype` first + images stored.
 
 It is **idempotent**: a `/*eink-baseN*/` CSS marker and grey-palette/size
 early-returns mean re-running is a no-op. Bump the marker (`eink-base4` →
@@ -138,109 +132,53 @@ are arbitrary/regenerated on every build. The existing declared values have
 to be rewritten in place instead.
 
 **Links inside an HTML `<table>` are untappable on a CrossInk touch device
-(X4 Pro, Sticky) — don't emit one for anything meant to be tapped.**
-CrossInk's touch-tap hit-testing (`EpubReaderActivity::buildFootnoteTouchTargets`)
-only builds a tappable hit-box for links in ordinary paragraph/line content;
-a link rendered inside a `<table>` renders through a different page-layout
-path and gets a permanently zero-sized touch target there — visually
+(X4 Pro, Sticky) — this is intentional here, do not "fix" it by converting
+tables to lists.** CrossInk's touch-tap hit-testing
+(`EpubReaderActivity::buildFootnoteTouchTargets`) only builds a tappable
+hit-box for links in ordinary paragraph/line content; a link rendered inside
+a `<table>` gets a permanently zero-sized touch target there — visually
 present, silently untappable, and the tap falls through to an ordinary
-page-turn (looks like it "did nothing" or "reloaded the page"). This is
-fixable in firmware, but per explicit instruction that fix does not live in
-the CrossInk repo (see its own `AGENTS.md` > "Touch Input Gotchas") — instead
-every `<table>` that calibre generates with real navigation links in it gets
-rewritten here, in `_clean_html_files`, into a bulleted `<ul><li>` list: the
-per-article Prev/Articles/Sections/Next navbar table (`_shrink_navbar`,
-matches `class="touchscreen_navbar"` / `"calibre_navbar"`, still a single
-compact line, not a bulleted list — it's a breadcrumb, not a list of things)
-and the book-level index-of-feeds table (`_shrink_toc_table`, matches
-`class="toc"` → one `<li>` per section, its article count folded into the
-link itself as `Label [N]` so the whole thing — bullet, label, count — reads
-and taps as one unit; square brackets, not round, so it never gets confused
-for the "(some text)" that occasionally appears in a section's own label).
-CrossInk draws a real "•" bullet for every `<li>` regardless of CSS
-(`ChapterHtmlSlimParser`'s block-tag handling for `"li"`; `CssDisplay` has no
-`list-item` value, so this isn't CSS-driven, it's hardcoded per-`<li>`
-markup). If calibre/a future recipe ever adds another table with real links
-in it, it needs the same treatment here — don't assume a new table is
-automatically fine just because the known ones are handled.
+page-turn.
 
-**Calibre's per-feed article-index "summary" is always garbage — drop it,
-don't try to fix it.** Each feed's own index page lists its articles as
-`<div class="article_summary"><a class="summary_headline" href="...">Title</a>
-<div class="summary_text">...</div></div>`; the `summary_text` is calibre's
-own truncation of the article's opening text down to a single character plus
-an ellipsis ("W…", "A…", "P…", ...) — a calibre/feed-parsing artifact in the
-upstream conversion, not something reachable from this repo's recipe code or
-fixable with CSS. `_shrink_article_summary` drops it entirely and rewrites
-each entry as a bare `<li><a href="...">Title</a></li>` (see above), grouped
-into one `<ul>` per feed by `_wrap_einklist_runs` (using a throwaway
-`class="einklist"` marker so the wrap only ever touches list items *this*
-function just created, never a real list an article's own body might
-contain).
+A prior version of this optimizer (commit `841b3a0`, reverted by
+`git revert` on 2026-09-13) rewrote both offending tables — the book-level
+`class="toc"` index-of-feeds table (`_shrink_toc_table`) and each feed's
+`class="article_summary"` article list (`_shrink_article_summary` +
+`_wrap_einklist_runs`) — into bulleted `<ul><li>` lists specifically to make
+their links tappable. **That fix caused a worse regression: sleep/wake
+resume broke for any book navigated via those newly-tappable links.**
+Confirmed both in the simulator and against two real user-downloaded EPUBs
+(9 Sept build, pre-fix table markup, resumed correctly after sleep; 13 Sept
+build, post-fix list markup, reset to the book index after every
+sleep/wake). Five separate simulator tests (tap-then-sleep, tap with a
+23s dwell before sleep, tap-then-pageturn-then-sleep, control page-turn-only
+navigation on both old and new markup, and stripping `toc.ncx` navPoints
+down to top-level-only) all isolated the same mechanism: a position reached
+via `navigateToHref()` (which any tapped internal link goes through,
+regardless of whether it came from a table or a list) does not get persisted
+before a sleep/reboot the way a position reached via sequential
+`nextPage()`/`prevPage()` does. That is a firmware-internal gap in
+`EpubReaderActivity`'s resume-position persistence, not fixable from EPUB
+content — and per this repo's explicit standing constraint, firmware is not
+touched to fix it. Since the untappable `<table>` markup incidentally
+prevents `navigateToHref` jumps into these pages in the first place (users
+can only reach them by sequential page-turning, which always persists
+correctly), reverting to plain tables is the working trade-off: correct
+sleep/wake resume, at the cost of these two navigation aids not being
+tap-driven. **Do not reintroduce `_shrink_toc_table` / `_shrink_article_summary`
+/ list-ification of these tables unless the firmware's `navigateToHref`
+resume-persistence gap is fixed first** — re-doing so reintroduces the same
+resume regression.
 
-**`_ARTICLE_SUMMARY_RE` used to emit malformed XHTML (mismatched/orphaned
-`</div>`), breaking every generated feed-index page.** The regex was a naive
-`<div class="article_summary">(.*?)</div>` (non-greedy). But calibre always
-nests a second div *inside* it —
-`<div class="article_summary"><a class="summary_headline">Title</a>
-<div class="summary_text">...</div></div>` — and a non-greedy `.*?</div>`
-stops at the *first* `</div>` it reaches, which is that inner
-`summary_text` div's own close, not `article_summary`'s. The true outer
-`</div>` was then left over, orphaned, in the rewritten output: every single
-feed-index page (article count 1 or more, didn't matter) came out with one
-unmatched closing `</div>` per article. Confirmed with
-`xml.dom.minidom.parse()` against real generator output — every feed-index
-file failed with "mismatched tag." This is very likely what "the firmware
-says the epub is malformed" was pointing at: an EPUB reader's XML/XHTML
-parser will reasonably reject or misbehave on a file with mismatched tags.
-Fixed by explicitly matching the known inner `summary_text` div (its own
-content excluded from the outer capture group via a lookahead, so the
-capture can't accidentally swallow past it) before requiring the real outer
-close — see the regex itself for the exact pattern. **Whenever a regex here
-captures "everything up to the next `</tag>`" for an element that a source
-template might nest another same-named or same-shaped element inside,
-verify against real generator output with an XML parser (not just eyeballing
-one sample) before trusting it** — a non-greedy `.*?</div>` is only safe
-against a *flat* structure, and calibre's templates are not guaranteed to
-stay flat just because one sample looked that way.
-
-**Found and fixed: tapping an article's title sometimes landed on the book's
-main index (or a neighbouring feed) instead of opening that article.** Not a
-firmware bug and not a bad `href` (both were checked and ruled out first).
-The actual cause: `.eink-nav`'s `font-size:60%` never really shrinks anything
-on-device (dead CSS — see the CrossInk CSS-limits note above), so this
-"compact" breadcrumb renders at full body text size and can wrap across 2-3
-lines for a long feed name (e.g. "NL: The Daily Brief (Zerodha)"). Combined
-with CrossInk's fixed 48px minimum touch-target size
-(`TOUCH_FOOTNOTE_TARGET_SIZE`, which pads every link's tap zone ~24px on
-every side regardless of the link's own rendered height), the nav's own
-padded tap zone reached down far enough to overlap the very next link on the
-page (the first article title, or the heading right above it) — so a tap
-aimed at the article could land on "Sections" (or the neighbouring-feed
-link) in the nav instead. Confirmed live with scripted taps in the
-simulator, isolating clean single-tap repro cases (see git history for the
-`CROSSPOINT_SIM_INPUT_SCRIPT` sequences used) that showed the exact boundary
-moving as the fix below was applied — this is what "confirm it live" (the
-previous version of this note) actually turned up.
-
-Fixed with two changes to `_shrink_navbar`, neither touching firmware:
-1. **Truncate every nav label** to `_NAV_LABEL_MAX_LEN` (16) characters with
-   a trailing `…`, so the breadcrumb stays short regardless of the
-   underlying title length and is far less likely to wrap.
-2. **Frame the nav with a bare `<hr/>` on each side.** An `<hr>` has no
-   `href` (no touch target of its own to interfere with anything), but
-   CrossInk's `emitHorizontalRule` gives it a real default margin (half a
-   line height, each side) when none is set in CSS — genuine physical
-   separation from whatever precedes/follows, independent of the
-   truncation. This is what actually closed the gap: truncation alone
-   (shorter text, same margins) was not enough on its own to stop the
-   overlap, since the 48px minimum pad can still exceed a single short
-   line's own margin.
-
-If a similar "wrong destination" symptom shows up elsewhere (a different
-list, a different breadcrumb), suspect this same mechanism first — an
-undersized margin next to *any* link, not a href/navigation bug — before
-re-litigating firmware link resolution.
+The malformed-XHTML bug this fix also carried (`_ARTICLE_SUMMARY_RE`'s
+non-greedy `(.*?)</div>` stopping at the first `</div>` — the nested
+`summary_text` div's own close — instead of the true outer close) no longer
+applies now that `_shrink_article_summary` itself is reverted; the general
+lesson still stands for any future regex here: **verify a "capture until the
+next `</tag>`" regex against real generator output with an XML parser (e.g.
+`xml.dom.minidom.parse()`), not just one eyeballed sample, whenever the
+source template might nest another same-named or same-shaped element
+inside.**
 
 ## Conventions
 

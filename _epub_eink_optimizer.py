@@ -562,61 +562,6 @@ def _minify_css(css: str) -> str:
     return css.strip()
 
 
-# CrossInk's block layout (ChapterHtmlSlimParser::makePages) does not collapse
-# adjacent vertical margins the way a browser does -- it applies a text
-# block's own margin-top *in addition to* the previous block's margin-bottom,
-# and does the same for headings and <hr>. A perfectly ordinary Calibre-style
-# rule like `p{margin:1em 0}` (top AND bottom both 1em) then renders as a 2em
-# gap between two paragraphs, and a paragraph -> <hr> -> heading transition
-# (margin-bottom 1em + hr's own top/bottom margin + heading's margin-top)
-# stacks into a visibly huge blank run. Rewrite every rule's margin so
-# margin-top is always 0 and margin-bottom carries the full original value
-# (falling back to the original top value when no bottom was set) -- the
-# same "spacing lives only in margin-bottom" convention used in HTML email/
-# print engines that don't collapse margins either. `<hr>` isn't left bare
-# either: CrossInk's own emitHorizontalRule() substitutes a sensible default
-# (half a line height) whenever an hr's margin-top resolves to 0, so zeroing
-# it here doesn't remove its gap, it just stops it from being additive.
-_RULE_RE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-_MARGIN_DECL_RE = re.compile(
-    r"margin(-top|-bottom|-left|-right)?:([^;]+);?", re.IGNORECASE
-)
-
-
-def _normalize_rule_margins(declarations: str) -> str:
-    top = bottom = None
-    kept: List[str] = []
-    for m in _MARGIN_DECL_RE.finditer(declarations):
-        side, value = m.group(1), m.group(2).strip()
-        if side is None:  # shorthand `margin: ...`
-            parts = value.split()
-            if len(parts) == 1:
-                top = bottom = parts[0]
-            elif len(parts) == 2:
-                top = bottom = parts[0]
-            elif len(parts) == 3:
-                top, bottom = parts[0], parts[2]
-            elif len(parts) >= 4:
-                top, bottom = parts[0], parts[2]
-        elif side.lower() == "-top":
-            top = value
-        elif side.lower() == "-bottom":
-            bottom = value
-        else:  # -left / -right: pass through untouched
-            kept.append(f"margin{side}:{value}")
-    if top is None and bottom is None:
-        return declarations  # no margin touched this rule at all
-    new_bottom = bottom if bottom is not None else top
-    rest = [p for p in _MARGIN_DECL_RE.sub("", declarations).split(";") if p]
-    return ";".join(rest + kept + ["margin-top:0", f"margin-bottom:{new_bottom}"])
-
-
-def _normalize_margins(css: str) -> str:
-    return _RULE_RE.sub(
-        lambda m: m.group(1) + "{" + _normalize_rule_margins(m.group(2)) + "}", css
-    )
-
-
 def _strip_css(csss: List[Path]) -> None:
     for css in csss:
         content = _read_text(css)
@@ -625,9 +570,7 @@ def _strip_css(csss: List[Path]) -> None:
         content = _FONT_FACE_RE.sub("", content)
         content = _DEAD_DECL_RE.sub("", content)
         content = _FONT_FAMILY_RE.sub("", content)
-        content = _minify_css(content)
-        content = _normalize_margins(content)
-        content = content + "\n" + _CSS_EINK_BASE
+        content = _minify_css(content) + "\n" + _CSS_EINK_BASE
         css.write_text(content, encoding="utf-8")
 
 
@@ -683,17 +626,6 @@ _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 # <source> with a remote/responsive srcset can shadow it and render nothing
 _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
 
-# CrossInk's layout engine special-cases a lone empty block produced by a
-# <br> (ChapterHtmlSlimParser::startNewTextBlock, the `fromBrElement` /
-# `currentIsEmptyBr` path): it injects a *full extra line height* of blank
-# space on top of the next block's own margin, so a genuine scene break reads
-# clearly. Source newsletters (Zerodha's Daily Brief, Finshots, ...) instead
-# use "<br><br>" as a plain inline paragraph separator -- on CrossInk that
-# renders as a hugely oversized gap, not the small in-browser line break the
-# author intended. Collapse any run of 2+ <br> down to a single one so it's
-# an ordinary line break rather than a device-only "scene break".
-_MULTI_BR_RE = re.compile(r"(?:<br\b[^>]*/?>\s*){2,}", re.IGNORECASE)
-
 # calibre's Prev/Articles/Sections/Next nav renders as a big bordered <table>
 # on the device (its hand-written CSS ignores descendant selectors). Rebuild
 # each one as a single small centred line of links.
@@ -705,18 +637,6 @@ _NAVBAR_RE = re.compile(
 _NAV_LINK_RE = re.compile(
     r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
 )
-# .eink-nav's `font-size:60%` never actually shrinks anything on-device (see
-# _CSS_EINK_BASE / CrossInk's CSS support notes) -- this line renders at full
-# body text size. A long feed name (e.g. "NL: The Daily Brief (Zerodha)")
-# then wraps this "compact" breadcrumb across 2-3 lines, and its touch target
-# grows tall enough to reach down into the real content below it: a tap
-# meant for the first article link can land on "Sections" (or a neighbouring
-# feed link) in the nav instead, and the reader jumps to the book's main
-# index or a different feed with no apparent reason. Confirmed live in the
-# simulator with scripted taps -- not a href/navigation bug, a touch-target
-# overlap caused by this nav's real, wrapped height. Truncate every label so
-# the breadcrumb stays short and compact regardless of the underlying title.
-_NAV_LABEL_MAX_LEN = 16
 
 
 def _shrink_navbar(m: "re.Match") -> str:
@@ -724,8 +644,6 @@ def _shrink_navbar(m: "re.Match") -> str:
     for href, txt in _NAV_LINK_RE.findall(m.group(0)):
         label = re.sub(r"<[^>]+>", "", txt)
         label = re.sub(r"\s+", " ", label).strip()
-        if len(label) > _NAV_LABEL_MAX_LEN:
-            label = label[: _NAV_LABEL_MAX_LEN - 1].rstrip() + "…"
         if label:
             # inline styles too: CrossInk's renderer ignores the `.eink-nav a`
             # descendant rule and the `x-small` keyword, so spell it out here
@@ -735,127 +653,11 @@ def _shrink_navbar(m: "re.Match") -> str:
             )
     if not links:
         return ""
-    # Frame the nav with a bare <hr/> on each side. It has no href (no touch
-    # target of its own) but CrossInk's emitHorizontalRule gives it a real
-    # default margin (half a line height, each side) when none is set in CSS
-    # -- genuine physical separation from whatever precedes/follows, on top
-    # of and independent from the truncation above. Needed because the fixed
-    # 48px minimum touch-target size (TOUCH_FOOTNOTE_TARGET_SIZE) pads every
-    # link's tap zone by ~24px on each side regardless of the nav's own
-    # height, so even a single short line can bleed into an adjacent link's
-    # tap zone across a small margin gap alone.
     return (
-        "<hr/>"
         '<p class="eink-nav" style="font-size:60%;line-height:1.1;'
         'text-align:center;margin:1px 0 4px;color:#666">'
         + '<small>' + " · ".join(links) + "</small></p>"
-        + "<hr/>"
     )
-
-
-# calibre's book-level "index of feeds/sections" page (the cover-adjacent
-# page listing each section with an article count) renders as a bordered
-# <table class="toc"> -- calibre's own periodical template, not something a
-# recipe emits directly. CrossInk's touch-tap hit-testing only registers taps
-# on ordinary paragraph/line content; a link inside any <table> (this one
-# included) gets a permanently zero-sized touch target there, so it's
-# visually present but silently untappable on a touch device (X4 Pro,
-# Sticky) -- see the CrossInk firmware's own AGENTS.md, "Touch Input
-# Gotchas". Firmware is not the place to fix this (explicit instruction);
-# instead rewrite the table here into a bulleted <ul><li> list -- CrossInk
-# draws a real bullet marker for <li> with no CSS list-style support needed --
-# so it renders (and taps) as ordinary paragraph content, one section per line.
-_TOC_TABLE_RE = re.compile(
-    r'<table\b[^>]*\bclass="[^"]*\btoc\b[^"]*"[^>]*>(.*?)</table>',
-    re.IGNORECASE | re.DOTALL,
-)
-_TOC_ROW_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
-_TOC_CELL_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
-_TOC_LINK_RE = re.compile(
-    r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
-)
-
-
-def _shrink_toc_table(m: "re.Match") -> str:
-    rows = []
-    for row_html in _TOC_ROW_RE.findall(m.group(1)):
-        cells = _TOC_CELL_RE.findall(row_html)
-        if not cells:
-            continue
-        link_match = _TOC_LINK_RE.search(cells[0])
-        if not link_match:
-            continue
-        href = link_match.group(1)
-        label = re.sub(r"<[^>]+>", "", link_match.group(2))
-        label = re.sub(r"\s+", " ", label).strip()
-        if not label:
-            continue
-        count = ""
-        if len(cells) > 1:
-            count = re.sub(r"<[^>]+>", "", cells[1])
-            count = re.sub(r"\s+", " ", count).strip()
-        # the article count sits inside the <a> (square brackets, not round)
-        # so the whole "Label [N]" reads as one underlined, tappable unit --
-        # CrossInk's forced link-underline covers only the <a> content itself.
-        suffix = " [%s]" % count if count else ""
-        rows.append('<li><a href="%s">%s%s</a></li>' % (href, label, suffix))
-    if not rows:
-        return ""
-    return "<ul>" + "".join(rows) + "</ul>"
-
-
-# calibre's per-feed "article index" page lists each article as
-# <div class="article_summary"><a class="summary_headline" href="...">Title</a>
-# <div class="summary_text">...</div></div>. The summary_text is calibre's own
-# truncation of the article's opening text down to one character plus an
-# ellipsis ("W…", "A…", "P…", ...) -- a calibre/feed-parsing artifact, not
-# something a stylesheet can fix -- so it is always noise and never useful
-# content. Drop it, and turn each entry into a real bulleted <li> (same
-# reasoning as _shrink_toc_table above): a plain <div> list item, one per
-# article, with no bullet or list semantics.
-# calibre always nests a <div class="summary_text"> *inside* the
-# article_summary div (see _shrink_article_summary's docstring below). A
-# naive non-greedy `(.*?)</div>` stops at the FIRST </div> it reaches, which
-# is that inner summary_text div's own close, not article_summary's -- the
-# true outer </div> is then left over, orphaned, corrupting the file's XHTML
-# (mismatched-tag parse error; confirmed with xml.dom.minidom against real
-# generator output). Explicitly consume the known inner div (its own content
-# excluded via a lookahead so group 1 can't swallow past it) before requiring
-# the real outer close.
-_ARTICLE_SUMMARY_RE = re.compile(
-    r'<div\b[^>]*\bclass="[^"]*\barticle_summary\b[^"]*"[^>]*>'
-    r'((?:(?!<div\b|</div>).)*)'
-    r'(?:<div\b[^>]*\bclass="[^"]*\bsummary_text\b[^"]*"[^>]*>.*?</div>\s*)?'
-    r'</div>',
-    re.IGNORECASE | re.DOTALL,
-)
-_SUMMARY_LINK_RE = re.compile(
-    r'<a\b[^>]*\bhref="([^"]+)"[^>]*\bclass="[^"]*\bsummary_headline\b[^"]*"'
-    r"[^>]*>(.*?)</a>",
-    re.IGNORECASE | re.DOTALL,
-)
-# marks a freshly-minted <li> so the wrap pass below only wraps runs of
-# *these* list items in a <ul> -- never a real content list an article's own
-# body text might already contain elsewhere in the same file.
-_EINKLIST_RUN_RE = re.compile(r'(?:\s*<li class="einklist">.*?</li>)+', re.DOTALL)
-_EINKLIST_CLASS_RE = re.compile(r'<li class="einklist">')
-
-
-def _shrink_article_summary(m: "re.Match") -> str:
-    link_match = _SUMMARY_LINK_RE.search(m.group(1))
-    if not link_match:
-        return ""
-    href = link_match.group(1)
-    label = re.sub(r"<[^>]+>", "", link_match.group(2))
-    label = re.sub(r"\s+", " ", label).strip()
-    if not label:
-        return ""
-    return '<li class="einklist"><a href="%s">%s</a></li>' % (href, label)
-
-
-def _wrap_einklist_runs(html: str) -> str:
-    html = _EINKLIST_RUN_RE.sub(lambda m: "<ul>" + m.group(0) + "</ul>", html)
-    return _EINKLIST_CLASS_RE.sub("<li>", html)
 
 
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
@@ -902,11 +704,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
         new = _REMOTE_IMG_RE.sub("", new)
         new = _SOURCE_RE.sub("", new)
-        new = _MULTI_BR_RE.sub("<br/>", new)
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
-        new = _TOC_TABLE_RE.sub(_shrink_toc_table, new)
-        new = _ARTICLE_SUMMARY_RE.sub(_shrink_article_summary, new)
-        new = _wrap_einklist_runs(new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
