@@ -21,8 +21,9 @@ data, so calibre never has to download an article page:
   formed cards each, no lazy loading available.
 
 Each card already carries the whole short (``news_obj.content``), the headline,
-image, source name/url and timestamp, so the article body is assembled here and
-handed to calibre via the ``content`` key.
+source name/url and timestamp, so the article body is assembled here and
+handed to calibre via the ``content`` key. Card images are deliberately
+dropped -- see _card_snippet -- to keep the e-ink build small and fast.
 '''
 import json
 import os
@@ -90,8 +91,6 @@ class Inshorts(BasicNewsRecipe):
     # embedded text is under its ~2000-char "embedded content" threshold, and
     # you get the whole inshorts.com page chrome instead of the card).
     use_embedded_content = True
-    compress_news_images = True
-    scale_news_images = (600, 600)
     ignore_duplicate_articles = {'url'}
     remove_empty_feeds = True
     # each category's cards are merged into a single calibre article per
@@ -107,9 +106,6 @@ class Inshorts(BasicNewsRecipe):
     masthead_url = 'https://assets.inshorts.com/website_assets/images/logo_inshorts.png'
 
     extra_css = '''
-        img {display:block; margin:0 auto;
-             filter:grayscale(100%) !important;
-             -webkit-filter:grayscale(100%) !important;}
         .byline {font-size:small; color:#202020; margin:0 0 .6em;}
         .hl {font-size:small; margin:0 0 .3em;}
     '''
@@ -253,11 +249,12 @@ class Inshorts(BasicNewsRecipe):
 
     def _card_snippet(self, card):
         '''Render one card as a self-contained HTML fragment (headline,
-        byline, image, the 60-word short) plus its timestamp, or None if the
-        card should be dropped (wrong type, no title/content, too old).
-        A whole *category*'s cards get concatenated into one merged article
-        by _merge_section -- see parse_index -- so there is no per-card
-        calibre "article"/page here, just a fragment of a bigger one.'''
+        byline, the 60-word short -- no image) plus its timestamp, or None
+        if the card should be dropped (wrong type, no title/content, too
+        old). A whole *category*'s cards get concatenated into one merged
+        article by _merge_section -- see parse_index -- so there is no
+        per-card calibre "article"/page here, just a fragment of a bigger
+        one.'''
         o = card.get('news_obj') or card
         if (o.get('news_type') or 'NEWS') != 'NEWS':
             return None
@@ -274,7 +271,6 @@ class Inshorts(BasicNewsRecipe):
 
         source_name = o.get('source_name') or 'Inshorts'
         author = o.get('author_name') or ''
-        image = o.get('image_url') or ''
 
         meta = source_name + (' · ' + author if author else '')
         if dt:
@@ -282,13 +278,11 @@ class Inshorts(BasicNewsRecipe):
                 timezone(timedelta(hours=5, minutes=30))).strftime(
                     '%d %b %Y, %I:%M %p IST')
 
-        # each card becomes its own <h3> + byline + image + short within the
-        # merged chapter, since there's no separate calibre article/heading
-        # per card to carry the title anymore.
+        # each card becomes its own <h3> + byline + short within the merged
+        # chapter, since there's no separate calibre article/heading per
+        # card to carry the title anymore.
         frag = ['<h3>%s</h3>' % escape(title)]
         frag.append('<p class="byline">%s</p>' % escape(meta))
-        if image:
-            frag.append('<img src="%s"/>' % escape(image, {'"': '&quot;'}))
         frag.append('<p>%s</p>' % escape(content))
         frag.append('<hr/>')
         return ''.join(frag), dt, title
