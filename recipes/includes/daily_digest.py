@@ -75,6 +75,8 @@ NEWSLETTER_FEEDS = (
      'https://www.thehindu.com/newsletter/newsletter-international/feeder/default.rss', False),
     ("Today's Cache (The Hindu)",
      'https://www.thehindu.com/newsletter/newsletter-today-cache/feeder/default.rss', False),
+    ('Daily Capsule (YourStory)',
+     'https://yourstory.com/category/daily-capsule/feed', False),
     ('The Daily Brief (Zerodha)', 'https://thedailybrief.zerodha.com/feed', False),
     ('Masala Chai', 'https://rss.beehiiv.com/feeds/Jk0t0xwJeq.xml', False),
     ('The Core', 'https://rss.beehiiv.com/feeds/4BOnz8D132.xml', False),
