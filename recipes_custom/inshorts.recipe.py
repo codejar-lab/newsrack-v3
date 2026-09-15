@@ -111,6 +111,7 @@ class Inshorts(BasicNewsRecipe):
              filter:grayscale(100%) !important;
              -webkit-filter:grayscale(100%) !important;}
         .byline {font-size:small; color:#202020; margin:0 0 .6em;}
+        .hl {font-size:small; margin:0 0 .3em;}
     '''
 
     # ------------------------------------------------------------------ cover
@@ -290,7 +291,7 @@ class Inshorts(BasicNewsRecipe):
             frag.append('<img src="%s"/>' % escape(image, {'"': '&quot;'}))
         frag.append('<p>%s</p>' % escape(content))
         frag.append('<hr/>')
-        return ''.join(frag), dt
+        return ''.join(frag), dt, title
 
     # --------------------------------------------------------------- sections
     def _api_section(self, label, cat, pages):
@@ -336,16 +337,24 @@ class Inshorts(BasicNewsRecipe):
     def _merge_section(label, frags):
         '''One category's cards, concatenated into a single calibre article
         -- i.e. one category = one chapter, and every card in it lands on
-        that same chapter/page instead of its own separate article/page.'''
-        html = ''.join(f for f, _ in frags)
-        latest = max((dt for _, dt in frags if dt), default=None)
+        that same chapter/page instead of its own separate article/page.
+        The chapter opens with a small-font plain-text headline list (no
+        links -- CrossInk's touch-tap hit-testing only ever targets links,
+        so a bare <ul><li> list here can never end up an untappable-table
+        or navigateToHref-jump situation) so the reader can see everything
+        in the chapter before paging through it card by card.'''
+        index = ''.join('<li class="hl">%s</li>' % escape(t)
+                         for _, _, t in frags)
+        html = ''.join(f for f, _, _ in frags)
+        latest = max((dt for _, dt, _ in frags if dt), default=None)
         art = {
             'title': label,
             # dedup key only -- never fetched, since 'content' is supplied
             'url': 'https://inshorts.com/en/read/' +
             re.sub(r'\W+', '-', label.lower()).strip('-'),
             'description': '',
-            'content': '<html><body>' + html + '</body></html>',
+            'content': ('<html><body><ul>' + index + '</ul><hr/>'
+                        + html + '</body></html>'),
         }
         if latest:
             art['date'] = latest.strftime('%a, %d %b %Y %H:%M:%S GMT')
