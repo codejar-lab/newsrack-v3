@@ -754,10 +754,15 @@ class DailyDigestBase(BasicNewsRecipe):
             if not entries:
                 continue
             fresh = _within_window(entries, NEWSLETTER_MAX_AGE_DAYS)
-            # drop anything already included in a past build -- see
+            # drop anything already included in a *past* build -- see
             # _SEEN_URLS_RETENTION_DAYS above for why this can't just rely
-            # on the freshness window alone
-            fresh = [e for e in fresh if e['url'] not in seen_urls]
+            # on the freshness window alone. A same-day rebuild (multiple
+            # triggers, manual re-runs, testing) is not "a past build":
+            # seen_urls[url] == today_str means it was only ever seen
+            # earlier *today*, so it's kept rather than skipped -- only a
+            # url last seen on an *earlier* date gets dropped.
+            fresh = [e for e in fresh
+                     if seen_urls.get(e['url'], today_str) == today_str]
             if not fresh:
                 self.log('Newsletter %s: nothing new in the last %s days'
                          % (name, NEWSLETTER_MAX_AGE_DAYS))
