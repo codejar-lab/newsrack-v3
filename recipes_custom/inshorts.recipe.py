@@ -97,11 +97,9 @@ class Inshorts(BasicNewsRecipe):
     remove_empty_feeds = True
     # all sections now land in one combined feed (see parse_index) -- this
     # used to cap each of the ~16 per-category feeds individually at a lean
-    # 20 cards; left at 20 (or any per-section-sized number) it would now cap
-    # the *entire* combined book at that many cards total instead. Set high
-    # enough that it can never bind against the true combined total; the
-    # real limits are each section's own page count / feed size, not this.
-    max_articles_per_feed = 1000
+    # 20 cards each (~ a few hundred combined). Now that they're one feed,
+    # this is the cap on the whole combined book instead.
+    max_articles_per_feed = 40
     resolve_internal_links = False
     oldest_article = 1.5  # days -- drop anything staler than the last build
     timefmt = ''
