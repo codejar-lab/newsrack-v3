@@ -95,7 +95,13 @@ class Inshorts(BasicNewsRecipe):
     scale_news_images = (600, 600)
     ignore_duplicate_articles = {'url'}
     remove_empty_feeds = True
-    max_articles_per_feed = 20  # keep each section a lean scroll
+    # all sections now land in one combined feed (see parse_index) -- this
+    # used to cap each of the ~16 per-category feeds individually at a lean
+    # 20 cards; left at 20 (or any per-section-sized number) it would now cap
+    # the *entire* combined book at that many cards total instead. Set high
+    # enough that it can never bind against the true combined total; the
+    # real limits are each section's own page count / feed size, not this.
+    max_articles_per_feed = 1000
     resolve_internal_links = False
     oldest_article = 1.5  # days -- drop anything staler than the last build
     timefmt = ''
@@ -246,7 +252,7 @@ class Inshorts(BasicNewsRecipe):
         return data.get('news_list', []) or data.get('list', []), \
             data.get('min_news_id')
 
-    def _article(self, card):
+    def _article(self, card, category=None):
         o = card.get('news_obj') or card
         if (o.get('news_type') or 'NEWS') != 'NEWS':
             return None
@@ -266,7 +272,11 @@ class Inshorts(BasicNewsRecipe):
         author = o.get('author_name') or ''
         image = o.get('image_url') or ''
 
-        meta = source_name + (' · ' + author if author else '')
+        # every section now lands in one combined feed (see parse_index), so
+        # the byline carries the category that used to be the section/chapter
+        # name -- otherwise there'd be no way to tell what a card is about.
+        meta = (category + ' · ' if category else '') + source_name + \
+            (' · ' + author if author else '')
         if dt:
             meta += ' · ' + dt.astimezone(
                 timezone(timedelta(hours=5, minutes=30))).strftime(
@@ -310,7 +320,7 @@ class Inshorts(BasicNewsRecipe):
                 if hid in seen:
                     continue
                 seen.add(hid)
-                a = self._article(c)
+                a = self._article(c, category=label)
                 if a:
                     arts.append(a)
                     fresh += 1
@@ -329,7 +339,7 @@ class Inshorts(BasicNewsRecipe):
         except Exception as e:
             self.log.warn('Inshorts %s: %s' % (label, e))
             return None
-        arts = [a for a in (self._article(c) for c in cards) if a]
+        arts = [a for a in (self._article(c, category=label) for c in cards) if a]
         return (label, arts) if arts else None
 
     def parse_index(self):
@@ -338,7 +348,23 @@ class Inshorts(BasicNewsRecipe):
         with ThreadPoolExecutor(max_workers=8) as ex:
             results = list(ex.map(lambda j: j[0](*j[1]), jobs))
 
-        feeds = [r for r in results if r and r[1]]
-        if not feeds:
+        # all sections combined into a single chapter/feed, in the fixed
+        # API_SECTIONS + TAG_SECTIONS order (ex.map preserves job order),
+        # instead of one chapter per category. Each card's byline still
+        # carries its category (see _article) so the section it came from
+        # isn't lost, just no longer a separate TOC entry/chapter.
+        seen_urls = set()
+        combined = []
+        for r in results:
+            if not r:
+                continue
+            _, arts = r
+            for a in arts:
+                if a['url'] in seen_urls:
+                    continue
+                seen_urls.add(a['url'])
+                combined.append(a)
+
+        if not combined:
             raise ValueError('Inshorts: no articles could be fetched.')
-        return feeds
+        return [(_name, combined)]
