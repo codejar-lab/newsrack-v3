@@ -167,21 +167,43 @@ correctly), reverting to plain tables was the working trade-off: correct
 sleep/wake resume, at the cost of these two navigation aids not being
 tap-driven.
 
-**Update (2026-09-15): `_shrink_toc_table` was reintroduced, but as a
-plain-text, non-link `<ul><li>` list — not the original tappable version.**
-It rewrites the book-level `class="toc"` table into a bulleted list purely
-for a nicer on-device look (no bordered grid; CrossInk draws a real "•"
-bullet for every `<li>`, hardcoded per-tag), but emits `<li>Label</li>`
-with no `<a href>` at all. This is safe: with zero links on the page there
-is zero possibility of a `navigateToHref()` call from it, so the
-resume-persistence gap above can't be triggered from this page regardless
-of what firmware does. Sections are still reached only by sequential
-page-turning, exactly like the reverted table version's real behaviour —
-the only change is visual. Do NOT add `href` back onto these `<li>`s
-(or reintroduce `_shrink_article_summary`'s tappable list) unless the
-firmware's `navigateToHref` resume-persistence gap is fixed first — that
+**Update (2026-09-15): the book-level toc table is now dropped entirely
+(`_TOC_TABLE_RE.sub("", new)`), not shown as a list.** A same-day
+intermediate version rewrote it into a plain-text, non-link `<ul><li>`
+list first — that was itself safe (no `<a href>` at all, so zero
+possibility of a `navigateToHref()` call from that page, meaning the
+resume-persistence gap above could never be triggered from it) — but the
+list was still just a redundant first page (every other page already has
+a "Sections" breadcrumb link back to it), so it's removed outright now
+instead: the book's first page is just masthead + date, and the reader
+reaches content by paging forward. If a book-level "Sections" *list* is
+ever wanted again, the safe non-link `<ul><li>` version (see git history
+around this date) is the pattern to reuse — do NOT add `href` back onto
+it, or reintroduce `_shrink_article_summary`'s tappable list, unless the
+firmware's `navigateToHref` resume-persistence gap is fixed first; that
 specific combination (a link + a tap into it) is what reintroduces the
 regression, not list markup by itself.
+
+**Also as of 2026-09-15: a feed's own "article index" stub page inlines
+that feed's headline list when its one linked article carries one.**
+calibre auto-generates one such stub per feed —
+`<div class="article_summary"><a class="summary_headline" href="...">
+Title</a></div>`, one entry per calibre "article" in that feed. A recipe
+that merges many cards into a single calibre article per feed (e.g.
+`inshorts.recipe.py`'s one-category-= one-chapter chapters, see its
+`_merge_section`) ends up with exactly *one* such entry, titled the same
+as the chapter — a wasted extra page/tap telling the reader nothing new
+before the real content, which already opens with its own plain-text
+`<ul><li class="hl">` headline list. `_inline_single_article_summary`
+(wired into `_clean_html_files` via a `_collect_headline_lists`
+pre-scan of every HTML file for that `hl`-class list) detects when the
+stub's one link points at a page carrying that list and splices the list
+in verbatim (normalizing away calibre's own `class="calibreN"` stamps on
+the `<ul>`/`<li>` it adds during conversion) in place of the link — same
+non-link reasoning as the toc page above. A feed with several genuinely
+distinct calibre articles (the normal case for other recipes, e.g.
+daily_digest's per-newsletter feeds) doesn't carry that `hl` list on its
+target(s) and is left completely untouched.
 
 The malformed-XHTML bug this fix also carried (`_ARTICLE_SUMMARY_RE`'s
 non-greedy `(.*?)</div>` stopping at the first `</div>` — the nested

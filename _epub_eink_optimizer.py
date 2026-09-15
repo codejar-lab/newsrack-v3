@@ -730,51 +730,78 @@ def _shrink_navbar(m: "re.Match") -> str:
 # calibre's book-level "index of feeds/sections" page (the cover-adjacent
 # page listing each section, linked from every chapter's own nav as
 # "Sections") renders as a bordered <table class="toc"> -- calibre's own
-# periodical template. Rewritten here into a plain bulleted <ul><li> list
-# purely for a better on-device look (a table renders as a heavy bordered
-# grid; CrossInk draws a real "•" bullet for every <li>, hardcoded per-tag,
-# not CSS-driven, so a list needs no extra styling to look right).
-#
-# Deliberately NOT turned into tappable <a href> links. A prior version of
-# this rewrite (commit 841b3a0 in this repo's history, reverted) did keep
-# the links, and that broke sleep/wake resume for any book navigated by
-# tapping a section: CrossInk's touch-tap hit-testing only ever targets
-# links (a link inside a <table> gets a permanently zero-sized touch
-# target, so the *table* version was never actually tappable either --
-# see AGENTS.md's "Touch Input Gotchas"), but tapping a *list* link goes
-# through navigateToHref(), and EpubReaderActivity's resume-position
-# persistence does not survive sleep/wake for a position reached that way
-# -- only sequential page-turns do. That's a firmware-internal gap, not
-# fixable from EPUB content, and per this repo's standing constraint
-# firmware is not modified to fix it. Plain-text bullets get the visual
-# improvement with none of that risk: sections are still reached by
-# paging through sequentially, exactly like the table version's real
-# on-device behaviour, just without the heavy grid.
+# periodical template. Dropped entirely here (not needed at the start of
+# the book, where it just delayed the reader from the actual content by one
+# more page): the table's own links were never tappable anyway (a link
+# inside a <table> gets a permanently zero-sized touch target -- see
+# AGENTS.md's "Touch Input Gotchas"), and a prior attempt at a tappable
+# <ul><li> replacement (commit 841b3a0, reverted) broke sleep/wake resume,
+# since tapping a *list* link goes through navigateToHref(), and
+# EpubReaderActivity's resume-position persistence doesn't survive
+# sleep/wake for a position reached that way -- only sequential page-turns
+# do. A firmware-internal gap, not fixable from EPUB content. Since this
+# page can't usefully be both tappable and content-bearing without that
+# risk, and per-chapter navigation already exists via the nav breadcrumb
+# ("Sections") on every other page, this page is simply removed rather than
+# kept as a dead-weight list.
 _TOC_TABLE_RE = re.compile(
-    r'<table\b[^>]*\bclass="[^"]*\btoc\b[^"]*"[^>]*>(.*?)</table>',
+    r'<table\b[^>]*\bclass="[^"]*\btoc\b[^"]*"[^>]*>.*?</table>',
     re.IGNORECASE | re.DOTALL,
 )
-_TOC_ROW_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
-_TOC_CELL_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
-_TOC_LABEL_RE = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+
+# calibre also auto-generates one "feed index" stub page per feed, listing
+# each of that feed's own calibre "articles" as
+# <div class="article_summary"><a class="summary_headline" href="...">Title
+# </a></div>. A recipe that merges many cards into a single calibre article
+# per feed (e.g. inshorts.recipe.py's one-category-= one-chapter chapters)
+# ends up with exactly *one* such link here, titled the same as the chapter
+# -- a wasted extra page telling the reader nothing they don't already know,
+# before the real content. That merged chapter already opens with its own
+# plain-text <ul><li class="hl"> headline list (see inshorts.recipe.py); when
+# this stub's one link points at a page carrying that list, inline the list
+# here in place of the link -- same non-link reasoning as the toc page above
+# -- so this stub page becomes the headline index it should be instead of a
+# single redundant tap target. Recipes without this pattern (a real
+# multi-article feed with several distinct calibre articles) don't match and
+# are left untouched.
+_ARTICLE_SUMMARY_DIV_RE = re.compile(
+    r'<div\b[^>]*\bclass="[^"]*\barticle_summary\b[^"]*"[^>]*>\s*'
+    r'<a\b[^>]*\bhref="([^"#]+)"[^>]*\bclass="[^"]*\bsummary_headline\b[^"]*"'
+    r'[^>]*>.*?</a>\s*</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+_HL_LIST_RE = re.compile(
+    r'<ul\b[^>]*>\s*(?:<li\b[^>]*\bclass="[^"]*\bhl\b[^"]*"[^>]*>.*?</li>\s*)+</ul>',
+    re.IGNORECASE | re.DOTALL,
+)
+_HL_LIST_OPEN_RE = re.compile(r"^<ul\b[^>]*>", re.IGNORECASE)
+_HL_ITEM_OPEN_RE = re.compile(r"<li\b[^>]*>", re.IGNORECASE)
 
 
-def _shrink_toc_table(m: "re.Match") -> str:
-    rows = []
-    for row_html in _TOC_ROW_RE.findall(m.group(1)):
-        cells = _TOC_CELL_RE.findall(row_html)
-        if not cells:
+def _collect_headline_lists(htmls: List[Path]) -> Dict[Path, str]:
+    found: Dict[Path, str] = {}
+    for path in htmls:
+        content = _read_text(path)
+        if content is None:
             continue
-        label_match = _TOC_LABEL_RE.search(cells[0])
-        label_src = label_match.group(1) if label_match else cells[0]
-        label = re.sub(r"<[^>]+>", "", label_src)
-        label = re.sub(r"\s+", " ", label).strip()
-        if not label:
-            continue
-        rows.append("<li>%s</li>" % label)
-    if not rows:
-        return ""
-    return "<ul>" + "".join(rows) + "</ul>"
+        m = _HL_LIST_RE.search(content)
+        if m:
+            # calibre stamps its own class onto <ul>/<li> during conversion
+            # (e.g. <ul class="calibre10">) -- normalise both back to bare
+            # tags for the plain-list target this gets spliced into.
+            normalized = _HL_LIST_OPEN_RE.sub("<ul>", m.group(0))
+            normalized = _HL_ITEM_OPEN_RE.sub("<li>", normalized)
+            found[path.resolve()] = normalized
+    return found
+
+
+def _inline_single_article_summary(
+    html: str, path: Path, headline_lists: Dict[Path, str]
+) -> str:
+    def repl(m: "re.Match") -> str:
+        target = (path.parent / m.group(1)).resolve()
+        return headline_lists.get(target, m.group(0))
+    return _ARTICLE_SUMMARY_DIV_RE.sub(repl, html)
 
 
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
@@ -808,6 +835,7 @@ def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None
 
 
 def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
+    headline_lists = _collect_headline_lists(htmls)
     for path in htmls:
         content = _read_text(path)
         if content is None:
@@ -823,7 +851,8 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _SOURCE_RE.sub("", new)
         new = _MULTI_BR_RE.sub("<br/>", new)
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
-        new = _TOC_TABLE_RE.sub(_shrink_toc_table, new)
+        new = _TOC_TABLE_RE.sub("", new)
+        new = _inline_single_article_summary(new, path, headline_lists)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
