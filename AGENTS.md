@@ -163,12 +163,25 @@ content — and per this repo's explicit standing constraint, firmware is not
 touched to fix it. Since the untappable `<table>` markup incidentally
 prevents `navigateToHref` jumps into these pages in the first place (users
 can only reach them by sequential page-turning, which always persists
-correctly), reverting to plain tables is the working trade-off: correct
+correctly), reverting to plain tables was the working trade-off: correct
 sleep/wake resume, at the cost of these two navigation aids not being
-tap-driven. **Do not reintroduce `_shrink_toc_table` / `_shrink_article_summary`
-/ list-ification of these tables unless the firmware's `navigateToHref`
-resume-persistence gap is fixed first** — re-doing so reintroduces the same
-resume regression.
+tap-driven.
+
+**Update (2026-09-15): `_shrink_toc_table` was reintroduced, but as a
+plain-text, non-link `<ul><li>` list — not the original tappable version.**
+It rewrites the book-level `class="toc"` table into a bulleted list purely
+for a nicer on-device look (no bordered grid; CrossInk draws a real "•"
+bullet for every `<li>`, hardcoded per-tag), but emits `<li>Label</li>`
+with no `<a href>` at all. This is safe: with zero links on the page there
+is zero possibility of a `navigateToHref()` call from it, so the
+resume-persistence gap above can't be triggered from this page regardless
+of what firmware does. Sections are still reached only by sequential
+page-turning, exactly like the reverted table version's real behaviour —
+the only change is visual. Do NOT add `href` back onto these `<li>`s
+(or reintroduce `_shrink_article_summary`'s tappable list) unless the
+firmware's `navigateToHref` resume-persistence gap is fixed first — that
+specific combination (a link + a tap into it) is what reintroduces the
+regression, not list markup by itself.
 
 The malformed-XHTML bug this fix also carried (`_ARTICLE_SUMMARY_RE`'s
 non-greedy `(.*?)</div>` stopping at the first `</div>` — the nested

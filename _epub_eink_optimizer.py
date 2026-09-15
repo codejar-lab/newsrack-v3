@@ -727,6 +727,56 @@ def _shrink_navbar(m: "re.Match") -> str:
     )
 
 
+# calibre's book-level "index of feeds/sections" page (the cover-adjacent
+# page listing each section, linked from every chapter's own nav as
+# "Sections") renders as a bordered <table class="toc"> -- calibre's own
+# periodical template. Rewritten here into a plain bulleted <ul><li> list
+# purely for a better on-device look (a table renders as a heavy bordered
+# grid; CrossInk draws a real "•" bullet for every <li>, hardcoded per-tag,
+# not CSS-driven, so a list needs no extra styling to look right).
+#
+# Deliberately NOT turned into tappable <a href> links. A prior version of
+# this rewrite (commit 841b3a0 in this repo's history, reverted) did keep
+# the links, and that broke sleep/wake resume for any book navigated by
+# tapping a section: CrossInk's touch-tap hit-testing only ever targets
+# links (a link inside a <table> gets a permanently zero-sized touch
+# target, so the *table* version was never actually tappable either --
+# see AGENTS.md's "Touch Input Gotchas"), but tapping a *list* link goes
+# through navigateToHref(), and EpubReaderActivity's resume-position
+# persistence does not survive sleep/wake for a position reached that way
+# -- only sequential page-turns do. That's a firmware-internal gap, not
+# fixable from EPUB content, and per this repo's standing constraint
+# firmware is not modified to fix it. Plain-text bullets get the visual
+# improvement with none of that risk: sections are still reached by
+# paging through sequentially, exactly like the table version's real
+# on-device behaviour, just without the heavy grid.
+_TOC_TABLE_RE = re.compile(
+    r'<table\b[^>]*\bclass="[^"]*\btoc\b[^"]*"[^>]*>(.*?)</table>',
+    re.IGNORECASE | re.DOTALL,
+)
+_TOC_ROW_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_TOC_CELL_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
+_TOC_LABEL_RE = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+
+
+def _shrink_toc_table(m: "re.Match") -> str:
+    rows = []
+    for row_html in _TOC_ROW_RE.findall(m.group(1)):
+        cells = _TOC_CELL_RE.findall(row_html)
+        if not cells:
+            continue
+        label_match = _TOC_LABEL_RE.search(cells[0])
+        label_src = label_match.group(1) if label_match else cells[0]
+        label = re.sub(r"<[^>]+>", "", label_src)
+        label = re.sub(r"\s+", " ", label).strip()
+        if not label:
+            continue
+        rows.append("<li>%s</li>" % label)
+    if not rows:
+        return ""
+    return "<ul>" + "".join(rows) + "</ul>"
+
+
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
     """After JPEGs were rewritten as PNG, fix every reference to them: manifest
     hrefs, <img src>/srcset, CSS url(), NCX. Also flips the OPF media-type of
@@ -773,6 +823,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _SOURCE_RE.sub("", new)
         new = _MULTI_BR_RE.sub("<br/>", new)
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
+        new = _TOC_TABLE_RE.sub(_shrink_toc_table, new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
