@@ -66,6 +66,7 @@ HINDU_EXTRA_KEYS = ('science', 'edit')  # The Hindu's section is literally 'Edit
 # it makes the edition. It is also inferred from post spacing as a fallback.
 NEWSLETTER_FEEDS = (
     ('Finshots', 'https://finshots.in/rss/', False),
+    ('Groww Digest', 'https://digest.groww.in/feed', False),
     ('The Daily Brief (Zerodha)', 'https://thedailybrief.zerodha.com/feed', False),
     ('Masala Chai', 'https://rss.beehiiv.com/feeds/Jk0t0xwJeq.xml', False),
     ('The Core', 'https://rss.beehiiv.com/feeds/4BOnz8D132.xml', False),
