@@ -200,8 +200,17 @@ pre-scan of every HTML file for that `hl`-class list) detects when the
 stub's one link points at a page carrying that list and splices the list
 in verbatim (normalizing away calibre's own `class="calibreN"` stamps on
 the `<ul>`/`<li>` it adds during conversion) in place of the link — same
-non-link reasoning as the toc page above. A feed with several genuinely
-distinct calibre articles (the normal case for other recipes, e.g.
+non-link reasoning as the toc page above.
+
+The list is *moved*, not copied: `_collect_consumed_headline_targets`
+tracks which chapter files actually had their list inlined onto some
+stub page, and `_clean_html_files` strips that same list (plus its
+trailing divider `<hr/>`, if any) back out of the chapter file itself
+right after — otherwise it rendered twice, once on the stub page and
+again at the top of the chapter's own content, which is what "duplicate
+list" feedback caught on the first version of this fix. A feed with
+several genuinely distinct calibre articles (the normal case for other
+recipes, e.g.
 daily_digest's per-newsletter feeds) doesn't carry that `hl` list on its
 target(s) and is left completely untouched.
 

@@ -774,6 +774,15 @@ _HL_LIST_RE = re.compile(
     r'<ul\b[^>]*>\s*(?:<li\b[^>]*\bclass="[^"]*\bhl\b[^"]*"[^>]*>.*?</li>\s*)+</ul>',
     re.IGNORECASE | re.DOTALL,
 )
+# when stripping the list back out of its source chapter (see
+# _collect_consumed_headline_targets), also eat a <hr/> immediately after it
+# -- inshorts.recipe.py's _merge_section puts one there as a divider between
+# the headline list and the first card, which would otherwise dangle as a
+# stray rule at the very top of the chapter once the list above it is gone.
+_HL_LIST_STRIP_RE = re.compile(
+    _HL_LIST_RE.pattern + r'\s*(?:<hr\b[^>]*/?>)?',
+    re.IGNORECASE | re.DOTALL,
+)
 _HL_LIST_OPEN_RE = re.compile(r"^<ul\b[^>]*>", re.IGNORECASE)
 _HL_ITEM_OPEN_RE = re.compile(r"<li\b[^>]*>", re.IGNORECASE)
 
@@ -793,6 +802,27 @@ def _collect_headline_lists(htmls: List[Path]) -> Dict[Path, str]:
             normalized = _HL_ITEM_OPEN_RE.sub("<li>", normalized)
             found[path.resolve()] = normalized
     return found
+
+
+def _collect_consumed_headline_targets(
+    htmls: List[Path], headline_lists: Dict[Path, str]
+) -> "set[Path]":
+    """Which of _collect_headline_lists' source files actually get their list
+    moved onto a stub page (i.e. some article_summary div really links to
+    them). The list is *moved*, not copied: once it's shown on the stub page,
+    _clean_html_files strips it back out of the chapter itself so it doesn't
+    render twice (once on the stub page, once again at the top of the
+    chapter content)."""
+    consumed: "set[Path]" = set()
+    for path in htmls:
+        content = _read_text(path)
+        if content is None:
+            continue
+        for m in _ARTICLE_SUMMARY_DIV_RE.finditer(content):
+            target = (path.parent / m.group(1)).resolve()
+            if target in headline_lists:
+                consumed.add(target)
+    return consumed
 
 
 def _inline_single_article_summary(
@@ -836,6 +866,7 @@ def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None
 
 def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
     headline_lists = _collect_headline_lists(htmls)
+    consumed_hl_targets = _collect_consumed_headline_targets(htmls, headline_lists)
     for path in htmls:
         content = _read_text(path)
         if content is None:
@@ -853,6 +884,12 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
         new = _TOC_TABLE_RE.sub("", new)
         new = _inline_single_article_summary(new, path, headline_lists)
+        if path.resolve() in consumed_hl_targets:
+            # this file's own headline list just got moved onto the stub
+            # page that links to it (above) -- strip it (and its trailing
+            # divider <hr/>, if any) out here so it doesn't also render at
+            # the top of the chapter itself.
+            new = _HL_LIST_STRIP_RE.sub("", new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
