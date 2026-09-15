@@ -39,7 +39,6 @@ _name = 'Inshorts'
 API_URL = ('https://inshorts.com/api/en/news?category={cat}&max_limit=10'
            '&include_card_data=true')
 READ_URL = 'https://inshorts.com/en/read/{slug}'
-ARTICLE_URL = 'https://inshorts.com/en/news/{old_hash_id}'
 
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
@@ -95,11 +94,12 @@ class Inshorts(BasicNewsRecipe):
     scale_news_images = (600, 600)
     ignore_duplicate_articles = {'url'}
     remove_empty_feeds = True
-    # all sections now land in one combined feed (see parse_index) -- this
-    # used to cap each of the ~16 per-category feeds individually at a lean
-    # 20 cards each (~ a few hundred combined). Now that they're one feed,
-    # this is the cap on the whole combined book instead.
-    max_articles_per_feed = 40
+    # each category's cards are merged into a single calibre article per
+    # feed (see parse_index/_merge_section) -- max_articles_per_feed counts
+    # calibre articles, which is always exactly 1 per feed now, so it can't
+    # cap card count anymore. A per-category card-count cap belongs in
+    # API_SECTIONS' `pages` (10 cards/page) or _tag_section's cards list
+    # instead (currently ~10 cards per tag section, uncapped further).
     resolve_internal_links = False
     oldest_article = 1.5  # days -- drop anything staler than the last build
     timefmt = ''
@@ -250,7 +250,13 @@ class Inshorts(BasicNewsRecipe):
         return data.get('news_list', []) or data.get('list', []), \
             data.get('min_news_id')
 
-    def _article(self, card, category=None):
+    def _card_snippet(self, card):
+        '''Render one card as a self-contained HTML fragment (headline,
+        byline, image, the 60-word short) plus its timestamp, or None if the
+        card should be dropped (wrong type, no title/content, too old).
+        A whole *category*'s cards get concatenated into one merged article
+        by _merge_section -- see parse_index -- so there is no per-card
+        calibre "article"/page here, just a fragment of a bigger one.'''
         o = card.get('news_obj') or card
         if (o.get('news_type') or 'NEWS') != 'NEWS':
             return None
@@ -265,44 +271,30 @@ class Inshorts(BasicNewsRecipe):
             if dt < self._cutoff():
                 return None
 
-        old_hash = o.get('old_hash_id') or o.get('hash_id') or ''
         source_name = o.get('source_name') or 'Inshorts'
         author = o.get('author_name') or ''
         image = o.get('image_url') or ''
 
-        # every section now lands in one combined feed (see parse_index), so
-        # the byline carries the category that used to be the section/chapter
-        # name -- otherwise there'd be no way to tell what a card is about.
-        meta = (category + ' · ' if category else '') + source_name + \
-            (' · ' + author if author else '')
+        meta = source_name + (' · ' + author if author else '')
         if dt:
             meta += ' · ' + dt.astimezone(
                 timezone(timedelta(hours=5, minutes=30))).strftime(
                     '%d %b %Y, %I:%M %p IST')
 
-        # card only -- byline, image, the 60-word short. calibre prepends the
-        # article title as a heading, so no <h1> here. Nothing links to (or
-        # fetches) the publisher's full article page.
-        body = ['<p class="byline">%s</p>' % escape(meta)]
+        # each card becomes its own <h3> + byline + image + short within the
+        # merged chapter, since there's no separate calibre article/heading
+        # per card to carry the title anymore.
+        frag = ['<h3>%s</h3>' % escape(title)]
+        frag.append('<p class="byline">%s</p>' % escape(meta))
         if image:
-            body.append('<img src="%s"/>' % escape(image, {'"': '&quot;'}))
-        body.append('<p>%s</p>' % escape(content))
-
-        art = {
-            'title': title,
-            # dedup key only -- never fetched, since 'content' is supplied
-            'url': ARTICLE_URL.format(old_hash_id=old_hash) if old_hash
-            else (o.get('source_url') or 'https://inshorts.com/'),
-            'description': content,
-            'content': '<html><body>' + ''.join(body) + '</body></html>',
-        }
-        if dt:
-            art['date'] = dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
-        return art
+            frag.append('<img src="%s"/>' % escape(image, {'"': '&quot;'}))
+        frag.append('<p>%s</p>' % escape(content))
+        frag.append('<hr/>')
+        return ''.join(frag), dt
 
     # --------------------------------------------------------------- sections
     def _api_section(self, label, cat, pages):
-        seen, arts, offset = set(), [], None
+        seen, frags, offset = set(), [], None
         for _ in range(max(1, pages)):
             url = API_URL.format(cat=cat)
             if offset:
@@ -318,13 +310,13 @@ class Inshorts(BasicNewsRecipe):
                 if hid in seen:
                     continue
                 seen.add(hid)
-                a = self._article(c, category=label)
-                if a:
-                    arts.append(a)
+                r = self._card_snippet(c)
+                if r:
+                    frags.append(r)
                     fresh += 1
             if not offset or not fresh:
                 break
-        return (label, arts) if arts else None
+        return (label, frags) if frags else None
 
     def _tag_section(self, label, slug):
         try:
@@ -337,8 +329,27 @@ class Inshorts(BasicNewsRecipe):
         except Exception as e:
             self.log.warn('Inshorts %s: %s' % (label, e))
             return None
-        arts = [a for a in (self._article(c, category=label) for c in cards) if a]
-        return (label, arts) if arts else None
+        frags = [r for r in (self._card_snippet(c) for c in cards) if r]
+        return (label, frags) if frags else None
+
+    @staticmethod
+    def _merge_section(label, frags):
+        '''One category's cards, concatenated into a single calibre article
+        -- i.e. one category = one chapter, and every card in it lands on
+        that same chapter/page instead of its own separate article/page.'''
+        html = ''.join(f for f, _ in frags)
+        latest = max((dt for _, dt in frags if dt), default=None)
+        art = {
+            'title': label,
+            # dedup key only -- never fetched, since 'content' is supplied
+            'url': 'https://inshorts.com/en/read/' +
+            re.sub(r'\W+', '-', label.lower()).strip('-'),
+            'description': '',
+            'content': '<html><body>' + html + '</body></html>',
+        }
+        if latest:
+            art['date'] = latest.strftime('%a, %d %b %Y %H:%M:%S GMT')
+        return art
 
     def parse_index(self):
         jobs = [(self._api_section, s) for s in API_SECTIONS] + \
@@ -346,23 +357,11 @@ class Inshorts(BasicNewsRecipe):
         with ThreadPoolExecutor(max_workers=8) as ex:
             results = list(ex.map(lambda j: j[0](*j[1]), jobs))
 
-        # all sections combined into a single chapter/feed, in the fixed
-        # API_SECTIONS + TAG_SECTIONS order (ex.map preserves job order),
-        # instead of one chapter per category. Each card's byline still
-        # carries its category (see _article) so the section it came from
-        # isn't lost, just no longer a separate TOC entry/chapter.
-        seen_urls = set()
-        combined = []
-        for r in results:
-            if not r:
-                continue
-            _, arts = r
-            for a in arts:
-                if a['url'] in seen_urls:
-                    continue
-                seen_urls.add(a['url'])
-                combined.append(a)
-
-        if not combined:
+        # one category = one chapter/feed, and every card in that category
+        # is merged into that single chapter's one article instead of each
+        # card getting its own separate article/page.
+        feeds = [(label, [self._merge_section(label, frags)])
+                 for r in results if r for label, frags in (r,)]
+        if not feeds:
             raise ValueError('Inshorts: no articles could be fetched.')
-        return [(_name, combined)]
+        return feeds
