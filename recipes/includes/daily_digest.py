@@ -79,6 +79,57 @@ NEWSLETTER_FEEDS = (
 NEWSLETTER_MAX_AGE_DAYS = 1.15   # same discovery window as everything else
 WEEKLY_GAP_DAYS = 4              # avg days between posts to count as "weekly"
 
+# NEWSLETTER_MAX_AGE_DAYS's window is wider than the ~1 day between builds,
+# so an entry posted late in one day's window can still look "fresh" the
+# next day too -- without this, the same newsletter entry (same url) shows
+# up again in the very next day's epub. _seen_newsletter_urls persists,
+# across builds, every url actually included in a past build, so
+# parse_newsletters can drop repeats. Kept comfortably longer than
+# NEWSLETTER_MAX_AGE_DAYS so a url can't slip back into "fresh" before its
+# seen-record expires; short enough the file never grows unbounded.
+_SEEN_URLS_RETENTION_DAYS = 14
+
+
+def _seen_urls_path(recipe_cls_name):
+    # meta/ is the CI job's own cross-run artifact folder -- downloaded at
+    # the start of every GitHub Actions run and re-uploaded at the end (see
+    # .github/workflows/build.yml's "meta-artifacts" steps and
+    # _generate.py's meta_folder), already used there for job-log state.
+    # Reusing it here needs no new CI wiring. Scoped per recipe class (not
+    # global) so DailyDigestLive and IndiaOpinionDigest -- both subclasses
+    # of DailyDigestBase, both able to pull the same newsletters -- don't
+    # suppress each other's articles.
+    includes = os.environ.get('recipes_includes', '')
+    base = os.path.join(includes, '..', '..') if includes else '.'
+    return os.path.normpath(os.path.join(
+        base, 'meta', 'daily_digest_seen_urls__%s.json' % recipe_cls_name))
+
+
+def _load_seen_urls(recipe_cls_name):
+    try:
+        with open(_seen_urls_path(recipe_cls_name), 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_seen_urls(recipe_cls_name, seen):
+    cutoff = date.today().toordinal() - _SEEN_URLS_RETENTION_DAYS
+    pruned = {}
+    for url, seen_date in seen.items():
+        try:
+            if date.fromisoformat(seen_date).toordinal() >= cutoff:
+                pruned[url] = seen_date
+        except Exception:
+            continue  # drop anything with an unparseable date rather than keep it forever
+    path = _seen_urls_path(recipe_cls_name)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(pruned, f)
+    except Exception:
+        pass  # best-effort -- a failed write just means no cross-day dedup this run
+
 # public RSS-to-JSON gateways, tried in order when a feed 403s us directly
 # (Substack sits behind Cloudflare). Both fetch server-side and were verified
 # working against the blocked feeds.
@@ -693,13 +744,22 @@ class DailyDigestBase(BasicNewsRecipe):
                 lambda t: (t, self._fetch_feed_safe(t[0], t[1])),
                 nl_feeds))
 
+        cls_name = self.__class__.__name__
+        seen_urls = _load_seen_urls(cls_name)
+        today_str = date.today().isoformat()
+        newly_seen = {}
+
         out = []
         for (name, url, weekly), entries in fetched:
             if not entries:
                 continue
             fresh = _within_window(entries, NEWSLETTER_MAX_AGE_DAYS)
+            # drop anything already included in a past build -- see
+            # _SEEN_URLS_RETENTION_DAYS above for why this can't just rely
+            # on the freshness window alone
+            fresh = [e for e in fresh if e['url'] not in seen_urls]
             if not fresh:
-                self.log('Newsletter %s: nothing in the last %s days'
+                self.log('Newsletter %s: nothing new in the last %s days'
                          % (name, NEWSLETTER_MAX_AGE_DAYS))
                 continue
             if weekly or _cadence_is_weekly(entries):
@@ -721,7 +781,12 @@ class DailyDigestBase(BasicNewsRecipe):
                         c += '<!--' + ' ' * pad + '-->'
                     art['content'] = c
                 arts.append(art)
+                newly_seen[e['url']] = today_str
             out.append(('NL: ' + name, arts))
+
+        if newly_seen:
+            seen_urls.update(newly_seen)
+            _save_seen_urls(cls_name, seen_urls)
         return out
 
     def _fetch_feed_safe(self, name, url):

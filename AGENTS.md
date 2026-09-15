@@ -224,6 +224,65 @@ next `</tag>`" regex against real generator output with an XML parser (e.g.
 source template might nest another same-named or same-shaped element
 inside.**
 
+**Update (2026-09-15): calibre's `summary_text` truncation artifact
+("M…", "W…", ...) is now stripped from real (multi-article)
+`article_summary` entries too.** `daily_digest`'s per-newsletter feeds
+never went through `_shrink_article_summary` (reverted) or
+`_inline_single_article_summary`'s single-link path — they carry several
+genuinely distinct calibre articles, so both of those leave them alone —
+which meant the broken one-character `summary_text` div (calibre's own
+truncation of the article's opening text, always garbage, see the
+"Calibre's per-feed article-index summary" note this repo used to carry)
+was still visible on-device: a headline followed by a lone "M…" or
+similar. `_SUMMARY_TEXT_RE` strips just that inner `<div
+class="summary_text">...</div>` (a leaf element, so a non-greedy match to
+its own next `</div>` is safe, unlike `article_summary`'s outer close
+above) leaving the real `<a class="summary_headline">` link and its
+surrounding `<div class="article_summary">` completely untouched — this
+doesn't add, remove, or convert any link, so it carries none of the
+navigateToHref/resume risk documented above.
+
+**Also as of 2026-09-15: `daily_digest`'s newsletter articles no longer
+repeat across consecutive daily builds.** `NEWSLETTER_MAX_AGE_DAYS`
+(1.15 days) is wider than the ~1 day between builds, so an entry posted
+late in one day's window could still look "fresh" the next day too — the
+same newsletter entry (same url) would show up in two consecutive
+epubs. `parse_newsletters` now persists every included article's url
+(with the date it was included) to `meta/daily_digest_seen_urls__
+<RecipeClassName>.json` and filters against it on every run, dropping
+anything already published in a past build. `meta/` is the CI job's own
+cross-run artifact folder — already downloaded at the start of every
+GitHub Actions run and re-uploaded at the end (see
+`.github/workflows/build.yml`'s "meta-artifacts" steps and
+`_generate.py`'s `meta_folder`, previously used there only for job-log
+state) — so this needed no new CI wiring, secrets, or permissions.
+Records are pruned after `_SEEN_URLS_RETENTION_DAYS` (14, comfortably
+longer than the freshness window) so the file never grows unbounded.
+Scoped per recipe class name (`self.__class__.__name__`), not global, so
+`DailyDigestLive` and `IndiaOpinionDigest` — both `DailyDigestBase`
+subclasses pulling the same newsletters — can't suppress each other's
+articles. This only touches `parse_newsletters`; the four main
+opinion-page sources (Indian Express/Hindu/Livemint/Business Standard)
+have their own separate fetch paths and are not affected.
+
+**Gotcha found while testing this locally:** rapid back-to-back
+`test_eink.sh` runs against `IndiaOpinionDigest` can make the *other*
+four sources (via `_ie_via_wayback`'s Google News + Wayback Machine
+scraping, and presumably similar scraping for Hindu/Livemint/Business
+Standard) transiently return nothing — confirmed by temporarily removing
+the seen-urls file and re-running, which brought newsletters back and
+the same build then succeeded. Likely self-inflicted rate-limiting from
+testing too fast locally, not a real production risk on a normal
+once-daily CI cadence, and not something this newsletter-dedup change
+caused — but it does mean a newsletter-empty day is now more common than
+before (previously newsletters almost always contributed *something*),
+so a day where newsletters have genuinely nothing new **and** the other
+four sources have a real (not self-inflicted) transient failure would
+now hit `parse_index`'s `raise ValueError('No articles could be fetched
+from any source.')` where it might not have before. Not fixed here since
+it wasn't asked for; if it ever fires in a real CI run, that's the
+mechanism to know about.
+
 ## Conventions
 
 - Match the surrounding style; `flake8` clean for files you touch (line length

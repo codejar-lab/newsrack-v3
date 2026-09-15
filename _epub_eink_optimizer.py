@@ -834,6 +834,24 @@ def _inline_single_article_summary(
     return _ARTICLE_SUMMARY_DIV_RE.sub(repl, html)
 
 
+# calibre's real (multi-article) article_summary entries -- the ones
+# _inline_single_article_summary above doesn't touch, e.g. daily_digest's
+# per-newsletter feeds -- carry a second nested div alongside the headline
+# link: <div class="article_summary"><a class="summary_headline">Title</a>
+# <div class="summary_text">...</div></div>. summary_text is calibre's own
+# truncation of the article's opening text down to a single character plus
+# an ellipsis ("M…", "W…", ...) -- a calibre/feed-parsing artifact, never
+# real content, and confirmed on-device as visible noise under each headline
+# (see AGENTS.md). summary_text is always a leaf (no nested elements), so a
+# non-greedy match to its own next </div> is safe here -- unlike
+# article_summary's own outer close, which must NOT be matched this way (see
+# the malformed-XHTML lesson elsewhere in this file/AGENTS.md).
+_SUMMARY_TEXT_RE = re.compile(
+    r'<div\b[^>]*\bclass="[^"]*\bsummary_text\b[^"]*"[^>]*>.*?</div>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _rewrite_image_refs(text_files: List[Path], renames: Dict[str, str]) -> None:
     """After JPEGs were rewritten as PNG, fix every reference to them: manifest
     hrefs, <img src>/srcset, CSS url(), NCX. Also flips the OPF media-type of
@@ -884,6 +902,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
         new = _TOC_TABLE_RE.sub("", new)
         new = _inline_single_article_summary(new, path, headline_lists)
+        new = _SUMMARY_TEXT_RE.sub("", new)
         if path.resolve() in consumed_hl_targets:
             # this file's own headline list just got moved onto the stub
             # page that links to it (above) -- strip it (and its trailing
