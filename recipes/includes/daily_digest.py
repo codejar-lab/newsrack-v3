@@ -78,7 +78,6 @@ NEWSLETTER_FEEDS = (
     ('Daily Capsule (YourStory)',
      'https://yourstory.com/category/daily-capsule/feed', False),
     ('The Daily Brief (Zerodha)', 'https://thedailybrief.zerodha.com/feed', False),
-    ('Masala Chai', 'https://rss.beehiiv.com/feeds/Jk0t0xwJeq.xml', False),
     ('The Core', 'https://rss.beehiiv.com/feeds/4BOnz8D132.xml', False),
     ('Word of the Day', 'https://www.merriam-webster.com/wotd/feed/rss2', False),
     ('The Download (MIT Tech Review)',
@@ -260,6 +259,61 @@ IE_JUNK = _class_matcher(
 )
 _IE_LAZY_ATTRS = ('data-src', 'data-lazy-src', 'data-original', 'data-srcset',
                   'data-lazy-srcset')
+
+
+def _urllib_get(url, timeout=45):
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': GNEWS_UA})
+    return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+_DOTNEWS_POST_RE = re.compile(r'https?://(?:www\.)?dot\.news/post/([0-9a-f]+)')
+
+
+def _lexical_html(node):
+    """Minimal renderer for Dot News' Lexical-editor JSON post body."""
+    from xml.sax.saxutils import escape
+    t = node.get('type')
+    if t == 'text':
+        out = escape(node.get('text', ''))
+        f = node.get('format', 0) or 0
+        if f & 1:
+            out = '<b>%s</b>' % out
+        if f & 2:
+            out = '<i>%s</i>' % out
+        return out
+    inner = ''.join(_lexical_html(c) for c in node.get('children', []))
+    if t == 'link':
+        return '<a href="%s">%s</a>' % (escape(node.get('url') or '', {'"': '&quot;'}), inner)
+    if t == 'heading-element':
+        tag = node.get('tag') if node.get('tag') in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6') else 'h3'
+        return '<%s>%s</%s>' % (tag, inner, tag)
+    if t == 'webiny-quote':
+        return '<blockquote><p>%s</p></blockquote>' % inner
+    if t == 'paragraph-element':
+        return '<p>%s</p>' % inner if inner.strip() else ''
+    return inner
+
+
+def _dotnews_full_html(url, index_cache):
+    """Dot News' RSS carries only the one-line teaser; the real post body is
+    Lexical JSON at cdn.dot.news/post/<id>-<rev>.json, <rev> from
+    version-index.json. Returns HTML, or None if anything is off."""
+    m = _DOTNEWS_POST_RE.match(url)
+    if not m:
+        return None
+    if 'idx' not in index_cache:
+        idx = json.loads(_urllib_get('https://cdn.dot.news/version-index.json'))
+        index_cache['idx'] = {
+            p['id'].split('#')[0]: p['id'].split('#')[1]
+            for p in idx.get('posts', []) if '#' in p['id']}
+    rev = index_cache['idx'].get(m.group(1))
+    if not rev:
+        return None
+    post = json.loads(_urllib_get(
+        'https://cdn.dot.news/post/%s-%s.json' % (m.group(1), rev)))
+    html = _lexical_html(post['content']['root'])
+    return html if len(html) > 200 else None
 
 
 def _parse_feed_date(s):
@@ -756,6 +810,7 @@ class DailyDigestBase(BasicNewsRecipe):
                 nl_feeds))
 
         cls_name = self.__class__.__name__
+        self._dn_cache = {}
         seen_urls = _load_seen_urls(cls_name)
         today_str = date.today().isoformat()
         newly_seen = {}
@@ -790,6 +845,12 @@ class DailyDigestBase(BasicNewsRecipe):
                 if e['date_str']:
                     art['date'] = e['date_str']
                 body = e['content']
+                if _DOTNEWS_POST_RE.match(e['url']):
+                    try:
+                        body = _dotnews_full_html(e['url'], self._dn_cache) or body
+                    except Exception as ex:
+                        self.log.warn('Dot News full text failed for %s: %s'
+                                      % (e['url'], ex))
                 if body and len(body) > 40:
                     c = '<div class="x-newsletter">' + body + '</div>'
                     pad = CALIBRE_EMBEDDED_MIN_CHARS + 400 - len(c)
@@ -823,6 +884,16 @@ class DailyDigestBase(BasicNewsRecipe):
             self.log.warn('Newsletter %s: direct feed was not RSS' % name)
         except Exception as e:
             self.log.warn('Newsletter %s: direct feed failed (%s)' % (name, e))
+            # some hosts (YourStory) 403 mechanize's request fingerprint but
+            # serve the identical feed to a plain urllib request with the
+            # same User-Agent -- try that before the stale-prone gateways
+            try:
+                raw = _urllib_get(url).decode('utf-8', 'ignore')
+                if '<item' in raw or '<entry' in raw:
+                    self.log('Newsletter %s: fetched via urllib' % name)
+                    return _feed_entries(raw)
+            except Exception as e2:
+                self.log.warn('Newsletter %s: urllib retry failed (%s)' % (name, e2))
 
         html = self._chromium_get(url)
         if html and ('<item' in html or '<entry' in html):
