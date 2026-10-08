@@ -268,6 +268,12 @@ def _urllib_get(url, timeout=45):
 
 
 _DOTNEWS_POST_RE = re.compile(r'https?://(?:www\.)?dot\.news/post/([0-9a-f]+)')
+# The Hindu's newsletter feeds also list video, podcast and photo pages. They
+# are not articles (no body text to read), so they are dropped.
+_HINDU_URL_RE = re.compile(r'https?://(?:www\.)?thehindu\.com/', re.IGNORECASE)
+_NON_ARTICLE_URL_RE = re.compile(
+    r'https?://(?:www\.)?thehindu\.com/(?:videos?|podcasts?|photos?|multimedia)/',
+    re.IGNORECASE)
 
 
 def _lexical_html(node):
@@ -677,13 +683,13 @@ class DailyDigestBase(BasicNewsRecipe):
         draw_x = left_pad - bx0
         draw_y = (H - M - bottom_gap - by1)
         d.text((draw_x, draw_y), glyph, font=f, fill=(55, 55, 55))
+        return draw_y + by0
 
     def default_cover(self, cover_file):
         '''A spare black-on-off-white cover sized for the Xteink X4 panel:
         "DAILY DIGEST" over the day and date, any weekly newsletter in this
         edition listed below, a soft grey motif bottom-left and a small
         IDEAS / PEOPLE / PROGRESS tag bottom-right.'''
-        return draw_y + by0
         try:
             from PIL import Image, ImageDraw
         except ImportError:
@@ -746,15 +752,15 @@ class DailyDigestBase(BasicNewsRecipe):
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
         y = wk_bottom + 70
         for nm in weeklies:
+            # stop short of the newspaper motif rather than print over it
+            if y + 72 > motif_top - 30:
+                break
             left(y, nm, fit(nm, 60, bold=False))
             y += 84
 
         tag_f = self._cover_font(44, bold=False)
         ty = H - M - 150 - 3 * 78
         for word in ('IDEAS', 'PEOPLE', 'PROGRESS'):
-            # stop short of the newspaper motif rather than print over it
-            if y + 72 > motif_top - 30:
-                break
             s = ' '.join(word)
             w = d.textlength(s, font=tag_f)
             d.text((W - M - 60 - w, ty), s, font=tag_f, fill=faint)
@@ -824,6 +830,7 @@ class DailyDigestBase(BasicNewsRecipe):
             if not entries:
                 continue
             fresh = _within_window(entries, NEWSLETTER_MAX_AGE_DAYS)
+            fresh = [e for e in fresh if not _NON_ARTICLE_URL_RE.match(e['url'])]
             # drop anything already included in a *past* build -- see
             # _SEEN_URLS_RETENTION_DAYS above for why this can't just rely
             # on the freshness window alone. A same-day rebuild (multiple
@@ -843,7 +850,6 @@ class DailyDigestBase(BasicNewsRecipe):
 
             arts = []
             for e in fresh:
-                self._set_domain(e['url'], 'newsletter')
                 art = {'title': e['title'], 'url': e['url'],
                        'description': e['description']}
                 if e['date_str']:
@@ -855,12 +861,21 @@ class DailyDigestBase(BasicNewsRecipe):
                     except Exception as ex:
                         self.log.warn('Dot News full text failed for %s: %s'
                                       % (e['url'], ex))
-                if body and len(body) > 40:
+                has_body = bool(body and len(body) > 40)
+                if has_body:
                     c = '<div class="x-newsletter">' + body + '</div>'
                     pad = CALIBRE_EMBEDDED_MIN_CHARS + 400 - len(c)
                     if pad > 0:
                         c += '<!--' + ' ' * pad + '-->'
                     art['content'] = c
+                # A Hindu link with no feed body is downloaded as the bare
+                # article page, site header, menus and footer included. Route
+                # it through _clean_hindu (which trims to the article body)
+                # rather than the newsletter cleaner, which only runs on
+                # embedded feed bodies.
+                dom = ('hindu' if not has_body and _HINDU_URL_RE.match(e['url'])
+                       else 'newsletter')
+                self._set_domain(e['url'], dom)
                 arts.append(art)
                 newly_seen[e['url']] = today_str
             out.append(('NL: ' + name, arts))
