@@ -134,7 +134,7 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base4*/"
+_CSS_BASE_MARKER = "/*eink-base5*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
@@ -146,14 +146,24 @@ _CSS_EINK_BASE = (
     + "-webkit-filter:grayscale(100%) !important;}"
     + "*{text-shadow:none !important;box-shadow:none !important;"
     + "background-image:none !important;}"
-    # headings: solid black, a touch bigger than the reader's default
+    # headings: solid black, sized to read as titles without filling the
+    # screen (a 5-line headline at the old 1.7em)
     + "h1,h2,h3,h4,h5,h6{color:#000 !important;font-weight:bold !important;"
-    + "line-height:1.2 !important;}"
-    + "h1{font-size:1.7em !important;}h2{font-size:1.45em !important;}"
-    + "h3{font-size:1.2em !important;}"
+    + "line-height:1.2 !important;margin-top:0.5em !important;"
+    + "margin-bottom:0.3em !important;}"
+    + "h1{font-size:1.3em !important;}h2{font-size:1.15em !important;}"
+    + "h3{font-size:1.05em !important;}"
+    # body text: left-aligned (justified lines open big word gaps on a
+    # 4-level panel), one small gap between paragraphs, no stacked margins
+    + "p,li,blockquote{text-align:left !important;}"
+    + "p{margin-top:0 !important;margin-bottom:0.4em !important;}"
+    + ".caption,.cap,#img-cap{text-align:center !important;}"
+    # inline small/legacy <font> sizing makes some feeds (word-of-the-day
+    # blurbs) hard to read -- keep body-size text at body size
+    + "small,font{font-size:1em !important;}"
     # the inter-article nav (Prev/Articles/Sections/Next) is rebuilt as a
-    # single compact line by _clean_html_files -- keep it tiny and quiet
-    + ".eink-nav{font-size:60% !important;text-align:center !important;"
+    # single compact line by _clean_html_files -- small, but legible
+    + ".eink-nav{font-size:0.9em !important;text-align:center !important;"
     + "margin:1px 0 4px !important;color:#666 !important;line-height:1.1 !important;}"
     + ".eink-nav a{text-decoration:none !important;color:#666 !important;}"
     # in case a navbar table slips through unconverted
@@ -552,6 +562,9 @@ _FONT_FAMILY_RE = re.compile(
 )
 _FONT_FACE_RE = re.compile(r"@font-face\s*\{[^{}]*\}", re.IGNORECASE)
 _CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SMALL_FONT_SIZE_RE = re.compile(
+    r"font-size\s*:\s*(\d*\.?\d+)(em|rem|%)", re.IGNORECASE
+)
 
 
 def _minify_css(css: str) -> str:
@@ -616,6 +629,18 @@ def _normalize_margins(css: str) -> str:
     )
 
 
+def _clamp_small_font_sizes(css: str) -> str:
+    """Lift any relative font-size below ~body size up to 1em. Feeds wrap
+    whole blocks in shrunken classes (e.g. the Word of the Day blurb is
+    `.calibre25{font-size:0.66667em}`), which read as too small on the panel.
+    Keywords (small, smaller, ...) and absolute units are left alone."""
+    def repl(m: "re.Match") -> str:
+        value, unit = float(m.group(1)), m.group(2)
+        em = value / 100 if unit == "%" else value
+        return "font-size:1em" if em < 0.9 else m.group(0)
+    return _SMALL_FONT_SIZE_RE.sub(repl, css)
+
+
 def _strip_css(csss: List[Path]) -> None:
     for css in csss:
         content = _read_text(css)
@@ -625,6 +650,7 @@ def _strip_css(csss: List[Path]) -> None:
         content = _DEAD_DECL_RE.sub("", content)
         content = _FONT_FAMILY_RE.sub("", content)
         content = _minify_css(content)
+        content = _clamp_small_font_sizes(content)
         content = _normalize_margins(content)
         content = content + "\n" + _CSS_EINK_BASE
         css.write_text(content, encoding="utf-8")
@@ -692,6 +718,29 @@ _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
 # author intended. Collapse any run of 2+ <br> down to a single one so it's
 # an ordinary line break rather than a device-only "scene break".
 _MULTI_BR_RE = re.compile(r"(?:<br\b[^>]*/?>\s*){2,}", re.IGNORECASE)
+# a lone <br> at the very start/end of a block, or sitting between two blocks,
+# is an extra blank line on the device on top of the paragraph margin -- the
+# "large gap between paragraphs". Empty paragraphs (<p>&nbsp;</p>, <p><br/></p>)
+# are the same thing, one level up.
+_EMPTY_P_RE = re.compile(
+    r"<p\b[^>]*>(?:\s|&nbsp;|&#160;|<br\b[^>]*/?>)*</p>", re.IGNORECASE
+)
+_BR_LEADING_RE = re.compile(r"(<p\b[^>]*>)(?:\s*<br\b[^>]*/?>)+", re.IGNORECASE)
+_BR_BEFORE_BLOCK_RE = re.compile(
+    r"(?:<br\b[^>]*/?>\s*)+(?=</p>|<p\b|<div\b|</div>|<h[1-6]\b|<table\b"
+    r"|<hr\b|</td>|</li>)",
+    re.IGNORECASE,
+)
+# a feed with a single article gets its own stub page: the feed name as an
+# <h2 class="feed_title"> plus one article link. The link alone is enough, so
+# the heading is dropped on those pages (multi-article stubs keep theirs).
+_FEED_TITLE_RE = re.compile(
+    r'<h2\b[^>]*\bclass="[^"]*\bfeed_title\b[^"]*"[^>]*>.*?</h2>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+_ARTICLE_SUMMARY_OPEN_RE = re.compile(
+    r'<div\b[^>]*\bclass="[^"]*\barticle_summary\b', re.IGNORECASE
+)
 
 # calibre's Prev/Articles/Sections/Next nav renders as a big bordered <table>
 # on the device (its hand-written CSS ignores descendant selectors). Rebuild
@@ -720,10 +769,12 @@ def _shrink_navbar(m: "re.Match") -> str:
             )
     if not links:
         return ""
+    # no nested <small>: it compounded with the 60% size and left "Next"
+    # unreadably tiny on the device
     return (
-        '<p class="eink-nav" style="font-size:60%;line-height:1.1;'
+        '<p class="eink-nav" style="font-size:90%;line-height:1.1;'
         'text-align:center;margin:1px 0 4px;color:#666">'
-        + '<small>' + " · ".join(links) + "</small></p>"
+        + " · ".join(links) + "</p>"
     )
 
 
@@ -899,10 +950,15 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _REMOTE_IMG_RE.sub("", new)
         new = _SOURCE_RE.sub("", new)
         new = _MULTI_BR_RE.sub("<br/>", new)
+        new = _EMPTY_P_RE.sub("", new)
+        new = _BR_LEADING_RE.sub(r"\1", new)
+        new = _BR_BEFORE_BLOCK_RE.sub("", new)
         new = _NAVBAR_RE.sub(_shrink_navbar, new)
         new = _TOC_TABLE_RE.sub("", new)
         new = _inline_single_article_summary(new, path, headline_lists)
         new = _SUMMARY_TEXT_RE.sub("", new)
+        if len(_ARTICLE_SUMMARY_OPEN_RE.findall(new)) == 1:
+            new = _FEED_TITLE_RE.sub("", new)
         if path.resolve() in consumed_hl_targets:
             # this file's own headline list just got moved onto the stub
             # page that links to it (above) -- strip it (and its trailing

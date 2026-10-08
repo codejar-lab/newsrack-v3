@@ -650,7 +650,7 @@ class DailyDigestBase(BasicNewsRecipe):
         if the emoji font is unavailable.'''
         from PIL import Image, ImageDraw, ImageFont
         W, H = img.size
-        size = 300
+        size = 240
         bottom_gap = 150          # clear space between glyph and bottom border
         left_pad = M + 28
         d = ImageDraw.Draw(img)
@@ -666,7 +666,7 @@ class DailyDigestBase(BasicNewsRecipe):
             y0 = H - M - bottom_gap - size
             d.ellipse([left_pad, y0, left_pad + size, y0 + size],
                       fill=(150, 150, 150))
-            return
+            return y0
 
         glyph = '\U0001F4F0'
         try:
@@ -683,6 +683,7 @@ class DailyDigestBase(BasicNewsRecipe):
         "DAILY DIGEST" over the day and date, any weekly newsletter in this
         edition listed below, a soft grey motif bottom-left and a small
         IDEAS / PEOPLE / PROGRESS tag bottom-right.'''
+        return draw_y + by0
         try:
             from PIL import Image, ImageDraw
         except ImportError:
@@ -708,7 +709,7 @@ class DailyDigestBase(BasicNewsRecipe):
 
         # a newspaper icon (monochrome Noto Emoji, U+1F4F0) as the lower-left
         # motif, clipped inside the border frame
-        self._cover_motif(img, M)
+        motif_top = self._cover_motif(img, M)
         d = ImageDraw.Draw(img)
 
         d.rectangle([M, M, W - M, H - M], outline=ink, width=4)
@@ -743,14 +744,17 @@ class DailyDigestBase(BasicNewsRecipe):
         wk_bottom = d.textbbox((X, wk_y), wk_str, font=wk_font)[3]
 
         weeklies = list(dict.fromkeys(self._weekly_newsletters))[:5]
-        y = wk_bottom + 100
+        y = wk_bottom + 70
         for nm in weeklies:
             left(y, nm, fit(nm, 60, bold=False))
-            y += 92
+            y += 84
 
         tag_f = self._cover_font(44, bold=False)
         ty = H - M - 150 - 3 * 78
         for word in ('IDEAS', 'PEOPLE', 'PROGRESS'):
+            # stop short of the newspaper motif rather than print over it
+            if y + 72 > motif_top - 30:
+                break
             s = ' '.join(word)
             w = d.textlength(s, font=tag_f)
             d.text((W - M - 60 - w, ty), s, font=tag_f, fill=faint)
