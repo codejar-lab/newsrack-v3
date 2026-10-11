@@ -21,6 +21,59 @@ from html5_parser import parse
 
 from calibre.web.feeds.news import BasicNewsRecipe, classes
 
+
+
+def _webp_to_png(data):
+    '''PNG bytes for WebP `data` (RIFF....WEBP), or None if it is not WebP /
+    cannot be decoded.'''
+    if not (data[:4] == b'RIFF' and data[8:12] == b'WEBP'):
+        return None
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if im.mode not in ('RGB', 'RGBA', 'L', 'LA', 'P'):
+            im = im.convert('RGBA' if 'A' in im.mode else 'RGB')
+        out = io.BytesIO()
+        im.save(out, 'PNG')
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def _patch_fetch_webp():
+    # calibre's downloader (all feeds, all images) cannot always decode WebP
+    # (NotImage ... "detected type: webp"), dropping the picture. Convert every
+    # WebP response to PNG right where calibre fetches it.
+    try:
+        from calibre.web.fetch.simple import RecursiveFetcher
+    except Exception:
+        return
+    if getattr(RecursiveFetcher.fetch_url, '_webp_patched', False):
+        return
+    orig = RecursiveFetcher.fetch_url
+
+    def fetch_url(self, *args, **kwargs):
+        res = orig(self, *args, **kwargs)
+        try:
+            png = _webp_to_png(bytes(res))
+            if png:
+                new = type(res)(png)
+                for attr in ('newurl',):
+                    if hasattr(res, attr):
+                        setattr(new, attr, getattr(res, attr))
+                return new
+        except Exception:
+            pass
+        return res
+
+    fetch_url._webp_patched = True
+    RecursiveFetcher.fetch_url = fetch_url
+
+
+_patch_fetch_webp()
+
 _name = 'Daily Digest'
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +139,9 @@ NEWSLETTER_FEEDS = (
     ('Last Week in AI', 'https://lastweekin.ai/feed', True),
     ('India Wants to Know Quiz', 'https://iwtkquiz.substack.com/feed', True),
 )
+# feeds whose web pages are subscriber-gated: an entry with no body in the
+# feed itself can only be fetched as a paywall page, so it is dropped
+BODY_REQUIRED_NEWSLETTERS = ('Peek TV',)
 NEWSLETTER_MAX_AGE_DAYS = 1.15   # same discovery window as everything else
 WEEKLY_GAP_DAYS = 4              # avg days between posts to count as "weekly"
 
@@ -220,7 +276,24 @@ _NL_PROMO_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
     r'thank you for reading\.? do share',
     r'how did you like (?:today|this)',
     r'rate (?:today|this) (?:edition|newsletter)',
+    r"that.s it from us", r'send us your book',
+    r"don.t forget to (?:share|tell us)", r'hit reply to this email',
+    r'nslfeedback@', r"if you don.t already get this newsletter",
+    r'we would love to hear from you', r'for past editions of',
+    r'reach \d+k\+', r'^.{0,40}\bpartner with us\b.{0,20}$', r'^.{0,40}\bsupport us\b.{0,20}$',
+    r'got questions or feedback', r'share the newsletter',
+    r'^get (?:started free|the free guide)$',
+    r'^this post is for (?:paid )?subscribers',
+    r'^(?:sign up|subscribe)(?: now| today| here)?\.?$',
 ))
+# A feed body that is only a paywall teaser (Ghost "subscribers only" posts):
+# the full text is not obtainable, so the entry is dropped, not shipped as a
+# page of nav links and a Subscribe button.
+_PAYWALL_RE = re.compile(
+    r'this post is for (?:paid )?subscribers|'
+    r'(?:become|upgrade to) a (?:paid )?(?:member|subscriber) to (?:read|continue)|'
+    r'subscribe to (?:continue reading|read the (?:full|rest))',
+    re.IGNORECASE)
 # Section headings after which everything (to the next <hr>/heading) is a footer.
 _NL_FOOTER_HEADINGS = (
     'the team', 'written by', 'about the author', 'about us', 'credits',
@@ -855,6 +928,10 @@ class DailyDigestBase(BasicNewsRecipe):
                 if e['date_str']:
                     art['date'] = e['date_str']
                 body = e['content']
+                if body and _PAYWALL_RE.search(re.sub(r'<[^>]+>', ' ', body)):
+                    self.log('Newsletter %s: skipping paywalled post %s'
+                             % (name, e['url']))
+                    continue
                 if _DOTNEWS_POST_RE.match(e['url']):
                     try:
                         body = _dotnews_full_html(e['url'], self._dn_cache) or body
@@ -862,6 +939,10 @@ class DailyDigestBase(BasicNewsRecipe):
                         self.log.warn('Dot News full text failed for %s: %s'
                                       % (e['url'], ex))
                 has_body = bool(body and len(body) > 40)
+                if not has_body and name in BODY_REQUIRED_NEWSLETTERS:
+                    self.log('Newsletter %s: no feed body (subscribers-only), '
+                             'skipping %s' % (name, e['url']))
+                    continue
                 if has_body:
                     c = '<div class="x-newsletter">' + body + '</div>'
                     pad = CALIBRE_EMBEDDED_MIN_CHARS + 400 - len(c)
@@ -878,7 +959,8 @@ class DailyDigestBase(BasicNewsRecipe):
                 self._set_domain(e['url'], dom)
                 arts.append(art)
                 newly_seen[e['url']] = today_str
-            out.append(('NL: ' + name, arts))
+            if arts:
+                out.append(('NL: ' + name, arts))
 
         if newly_seen:
             seen_urls.update(newly_seen)
@@ -1198,15 +1280,27 @@ class DailyDigestBase(BasicNewsRecipe):
     )
 
     def parse_indian_express(self):
-        if self.chromium_first:
-            direct = self._ie_direct_feeds()
-            if direct:
-                self.log('Indian Express: %d section(s) fetched directly'
-                         % len(direct))
-                return direct
-            self.log('Indian Express: direct feeds blocked; '
-                     'using Google News + Wayback')
+        direct = self._ie_direct_feeds()
+        if direct:
+            self.log('Indian Express: %d section(s) fetched directly'
+                     % len(direct))
+            return direct
+        self.log('Indian Express: direct feeds blocked; '
+                 'using Google News + Wayback')
         return self._ie_via_wayback()
+
+    def _ie_get(self, url, timeout=40):
+        '''Direct fetch of an Indian Express URL: Chromium when enabled, else a
+        plain browser-UA request. None if blocked / failed.'''
+        html = self._chromium_get(url, timeout=timeout)
+        if html:
+            return html
+        try:
+            html = _urllib_get(url, timeout=timeout).decode('utf-8', 'ignore')
+        except Exception as e:
+            self.log.warn('  IE direct fetch failed for %s: %s' % (url, e))
+            return None
+        return None if looks_blocked(html) else html
 
     def _ie_direct_feeds(self):
         '''Indian Express section RSS + article HTML fetched straight from the
@@ -1219,7 +1313,7 @@ class DailyDigestBase(BasicNewsRecipe):
         cutoff = self.oldest_article * 86400
         out = []
         for section, path in self.IE_SECTIONS:
-            html = self._chromium_get(
+            html = self._ie_get(
                 'https://indianexpress.com/section/%s/feed/' % path)
             if not html or ('<item' not in html and '<entry' not in html):
                 continue
@@ -1227,7 +1321,7 @@ class DailyDigestBase(BasicNewsRecipe):
             for e in _feed_entries(html):
                 if e['date'] and (now - e['date']).total_seconds() > cutoff:
                     continue
-                page = self._chromium_get(e['url'], timeout=40)
+                page = self._ie_get(e['url'])
                 if not page:
                     continue
                 self._set_domain(e['url'], 'ie')
@@ -1440,6 +1534,7 @@ class DailyDigestBase(BasicNewsRecipe):
                 (img.find_parent(['figure', 'p']) or img).extract()
 
         self._strip_ad_blocks(soup)
+        self._strip_hindu_chrome(soup)
 
         # collapse a wrapper left holding nothing but whitespace
         for d in soup.findAll(['div', 'section']):
@@ -1467,12 +1562,23 @@ class DailyDigestBase(BasicNewsRecipe):
             if not (is_ad or is_foot):
                 continue
             anchor = el if el.name in heading_tags else (el.parent or el)
+            # beehiiv-style: the heading sits alone in its own <div>, the ad
+            # in the *following* sibling divs -- work at the wrapper level
+            while (anchor.parent is not None
+                   and anchor.parent.name not in ('body', '[document]')
+                   and self._norm_txt(self.tag_to_string(anchor.parent)).lower()
+                   == self._norm_txt(self.tag_to_string(anchor)).lower()):
+                anchor = anchor.parent
             for sib in list(anchor.find_next_siblings()):
                 nm = getattr(sib, 'name', None)
                 if nm == 'hr' or (is_ad and nm in heading_tags):
                     if nm == 'hr':
                         sib.extract()
                     break
+                if is_ad:
+                    st = self._norm_txt(self.tag_to_string(sib)).lower().strip(' :·—-')
+                    if st in _NL_FOOTER_HEADINGS:
+                        break  # the sponsor slot ends where the footer starts
                 sib.extract()
             anchor.extract()
 
@@ -1481,7 +1587,7 @@ class DailyDigestBase(BasicNewsRecipe):
             if el.parent is None or el.find(block_tags):
                 continue  # only leaf blocks
             txt = self._norm_txt(self.tag_to_string(el))
-            if not txt or len(txt) > 320:
+            if not txt or len(txt) > 520:
                 continue
             if any(r.search(txt) for r in _NL_PROMO_RES):
                 el.extract()
@@ -1510,6 +1616,21 @@ class DailyDigestBase(BasicNewsRecipe):
         {'id': lambda i: i and i.startswith('content-body-')},
     )
 
+    def _strip_hindu_chrome(self, soup):
+        # breadcrumb trail, "Updated/Published" stamps, "Related Topics" tag
+        # cloud and the newsletter-subscribe blurb on newsletter pages
+        for x in soup.findAll(['ol', 'ul'], attrs={'class': 'breadcrumb'}):
+            x.extract()
+        for h in soup.findAll(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            if self._norm_txt(self.tag_to_string(h)).lower() == 'related topics':
+                (h.parent or h).extract()
+        for p in soup.findAll('p'):
+            t = self._norm_txt(self.tag_to_string(p))
+            if (re.match(r'^(?:Updated|Published)\b.{0,60}\d{4}', t)
+                    or re.match(r'^\(?This is the (?:latest|\w+) edition of the '
+                                r'.{0,80}newsletter', t, re.I)):
+                p.extract()
+
     def _clean_hindu(self, soup):
         body = None
         for sel in self._HINDU_BODY_SELECTORS:
@@ -1519,6 +1640,7 @@ class DailyDigestBase(BasicNewsRecipe):
         self._trim_to(soup, body)
         for x in soup.findAll(attrs={'class': HINDU_JUNK}):
             x.extract()
+        self._strip_hindu_chrome(soup)
         for tag in soup.findAll(['source', 'button', 'svg']):
             tag.extract()
         # ad slots + the todays-paper photo-gallery / slideshow wrapper
@@ -1610,6 +1732,11 @@ class DailyDigestBase(BasicNewsRecipe):
                 h.endswith('/?utm_source=newbanner')
                 or 'utm_source=newsletter' in h)}):
             a.extract()
+
+        for t in soup.findAll(string=re.compile(
+                r'^\s*(?:Subscribe to see fewer ads|Story continues below|'
+                r'Advertisement)\.?\s*$', re.I)):
+            t.extract()
 
         kept_imgs = self._ie_images(soup, wb_ts)
         if not kept_imgs and lead_img:
