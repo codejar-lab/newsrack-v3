@@ -1,0 +1,40 @@
+name: "Deploy Pages payload"
+
+# The site is built on a local machine (see local/README.md) and force-pushed
+# to the `pages-payload` branch; this workflow only publishes that branch.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch holding the built site
+        required: false
+        default: pages-payload
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 1
+      - run: rm -rf .git
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

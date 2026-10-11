@@ -1,0 +1,40 @@
+# Local builder for the Daily Digest: runs build.sh daily at 06:00 IST and
+# publishes public/ to GitHub Pages (see local/README.md).
+FROM python:3.10-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive TZ=Asia/Kolkata \
+    QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--no-sandbox \
+    PATH=/opt/calibre:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget xz-utils git jq imagemagick nodejs npm tzdata \
+      libegl1 libopengl0 libgl1 libxkbcommon0 libxcb-cursor0 libxcb-xinerama0 \
+      libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxkbfile1 \
+      libfontconfig1 libdbus-1-3 libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# calibre (official isolated binary install -> /opt/calibre)
+RUN wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh \
+      | sh /dev/stdin install_dir=/opt isolated=y \
+    && ebook-convert --version
+
+# supercronic: cron for containers (logs to stdout, honours TZ)
+ARG SUPERCRONIC_VERSION=v0.2.33
+RUN curl -fsSL -o /usr/local/bin/supercronic \
+      https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64 \
+    && chmod +x /usr/local/bin/supercronic
+
+WORKDIR /app
+COPY requirements.txt package.json package-lock.json ./
+RUN pip install --no-cache-dir -r requirements.txt \
+    && npm ci --no-fund --no-audit || npm install --no-fund --no-audit
+
+COPY . .
+RUN chmod +x local/*.sh
+# 06:00 IST every day
+RUN echo '0 6 * * * /app/local/run-and-publish.sh' > /app/local/crontab
+
+ARG GIT_SHA=local
+ENV GITHUB_SHA=$GIT_SHA
+VOLUME ["/app/meta"]
+CMD ["supercronic", "-passthrough-logs", "/app/local/crontab"]

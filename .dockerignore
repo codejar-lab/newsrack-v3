@@ -1,0 +1,8 @@
+.git
+node_modules
+output
+public
+eink_test_output
+meta
+*.epub
+local/.env

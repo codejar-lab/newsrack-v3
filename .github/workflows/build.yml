@@ -1,9 +1,7 @@
 name: "Build"
 
+# Builds now run locally (see local/README.md); this workflow is manual-only.
 on:
-  push:
-    branches:
-      - '**'
   # schedule:
   #   - cron: "59 23 * * *"  # daily at 21:00 UTC == 02:30 IST (3h later than the previous 18:00 UTC)
 
@@ -37,10 +35,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'schedule' ||
-      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
