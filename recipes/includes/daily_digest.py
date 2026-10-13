@@ -13,7 +13,7 @@ import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
 import mechanize
@@ -1126,35 +1126,52 @@ class DailyDigestBase(BasicNewsRecipe):
     def parse_hindu(self):
         base = 'https://www.thehindu.com'
         edition = 'th_delhi'
-        today = date.today().strftime('%Y-%m-%d')
-        url = base + '/todays-paper/' + today + '/' + edition + '/'
-        soup = self.index_to_soup(
-            self._open_bytes(url).decode('utf-8', 'ignore'))
-        feeds_dict = defaultdict(list)
-        for script in soup.findAll('script'):
-            txt = self.tag_to_string(script)
-            if 'grouped_articles = {"' not in txt:
+        # Today's e-paper page exists early but carries no article data until
+        # the print edition is published (often after the 06:00 IST build), so
+        # fall back to the latest edition that actually has articles.
+        data = None
+        for back in range(3):
+            day = (date.today() - timedelta(days=back)).strftime('%Y-%m-%d')
+            url = base + '/todays-paper/' + day + '/' + edition + '/'
+            try:
+                soup = self.index_to_soup(
+                    self._open_bytes(url).decode('utf-8', 'ignore'))
+            except Exception as e:
+                self.log.warn('The Hindu %s: %s' % (day, e))
                 continue
-            art = re.search(r'grouped_articles = ({\".*)', txt)
-            data = json.JSONDecoder().raw_decode(art.group(1))[0]
-            for sec in data:
-                section = sec.replace('TH_', '').replace('_', ' ').strip()
-                if not self._wanted(section, HINDU_EXTRA_KEYS):
+            for script in soup.findAll('script'):
+                txt = self.tag_to_string(script)
+                if 'grouped_articles = {"' not in txt:
                     continue
-                is_science = 'science' in section.lower()
-                for item in data[sec]:
-                    a_url = absurl(item['href'], base)
-                    self._set_domain(a_url, 'hindu')
-                    desc = 'Page no.' + item.get('pageno', '') + ' | ' + (
-                        item.get('teaser_text') or '')
-                    label = ('Science' if is_science
-                             else self._hindu_label(item['articleheadline']))
-                    feeds_dict[label].append({
-                        'title': item['articleheadline'],
-                        'url': a_url,
-                        'description': desc,
-                    })
-            break
+                art = re.search(r'grouped_articles = ({\".*)', txt)
+                data = json.JSONDecoder().raw_decode(art.group(1))[0]
+                break
+            if data:
+                if back:
+                    self.log('The Hindu: %s edition not published yet, '
+                             'using %s' % (date.today().isoformat(), day))
+                break
+            self.log.warn('The Hindu: no articles on the %s e-paper page' % day)
+        if not data:
+            return []
+        feeds_dict = defaultdict(list)
+        for sec in data:
+            section = sec.replace('TH_', '').replace('_', ' ').strip()
+            if not self._wanted(section, HINDU_EXTRA_KEYS):
+                continue
+            is_science = 'science' in section.lower()
+            for item in data[sec]:
+                a_url = absurl(item['href'], base)
+                self._set_domain(a_url, 'hindu')
+                desc = 'Page no.' + item.get('pageno', '') + ' | ' + (
+                    item.get('teaser_text') or '')
+                label = ('Science' if is_science
+                         else self._hindu_label(item['articleheadline']))
+                feeds_dict[label].append({
+                    'title': item['articleheadline'],
+                    'url': a_url,
+                    'description': desc,
+                })
         return [(k, feeds_dict[k]) for k in self.HINDU_SECTION_ORDER
                 if feeds_dict.get(k)] + \
                [(k, v) for k, v in feeds_dict.items()
