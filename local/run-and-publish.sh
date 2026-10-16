@@ -22,15 +22,26 @@ ntfy_alert() {  # best-effort push; never fails the script
 # its EPUB; publishing that would REPLACE the live site with an empty one.
 # So: retry the whole build, and only publish if the book exists.
 ATTEMPTS="${BUILD_ATTEMPTS:-3}"
+# Per-recipe limit is 5 min (_recipes_custom.py); this outer limit also covers
+# the static-asset/minify steps. On expiry the whole process tree is killed and
+# the build restarts from scratch.
+BUILD_TIMEOUT="${BUILD_TIMEOUT:-600}"
 ok=0
 for i in $(seq 1 "$ATTEMPTS"); do
   echo "=== $(date -Is) build start (attempt $i/$ATTEMPTS) ==="
   rm -rf public output
-  sh build.sh || echo "build.sh exited non-zero"
+  rm -rf *.recipe
+  # own session/process group, so one kill takes down build.sh, _generate.py
+  # and every ebook-convert it spawned
+  setsid sh build.sh & bp=$!
+  ( sleep "$BUILD_TIMEOUT"; echo "!! build exceeded ${BUILD_TIMEOUT}s, killing it"; kill -KILL -- "-$bp" 2>/dev/null ) & wd=$!
+  wait "$bp" || echo "build.sh exited non-zero"
+  kill "$wd" 2>/dev/null || true
+  kill -KILL -- "-$bp" 2>/dev/null || true   # nothing may outlive an attempt
   [ -f job_summary.md ] && cat job_summary.md
   if ls "public/india-opinion-$(date +%F).epub" >/dev/null 2>&1; then ok=1; break; fi
   echo "!! no india-opinion EPUB produced on attempt $i"
-  [ "$i" -lt "$ATTEMPTS" ] && sleep 120
+  [ "$i" -lt "$ATTEMPTS" ] && sleep "${RETRY_WAIT:-60}"
 done
 rm -rf "$CALIBRE_CONFIG_DIRECTORY"
 if [ "$ok" != 1 ]; then

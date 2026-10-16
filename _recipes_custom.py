@@ -512,3 +512,11 @@ recipes: List[Recipe] = [
 # in the file for reference but excluded from the build.
 _active = {"india-opinion", "inshorts"}
 recipes = [r for r in recipes if r.recipe in _active]
+
+# A recipe that runs longer than 5 minutes is stuck (a healthy build takes
+# ~1 min): kill it and fail fast, with no in-generator retry. local/run-and-publish.sh
+# then restarts the whole build from scratch, up to 3 attempts.
+RECIPE_TIMEOUT_SECONDS = 300
+for _r in recipes:
+    _r.timeout = RECIPE_TIMEOUT_SECONDS
+    _r.retry_attempts = 0

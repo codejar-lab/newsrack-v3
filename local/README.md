@@ -34,6 +34,6 @@ A normal 1-minute build then ran past calibre's 20-minute limit and produced no
 EPUB. Keep the container IPv4-only.
 
 ## Failure behaviour
-`run-and-publish.sh` retries the build up to 3 times and publishes only if
+Each recipe is limited to 5 minutes (`RECIPE_TIMEOUT_SECONDS` in `_recipes_custom.py`, no inner retry) and the whole build to `BUILD_TIMEOUT` (600 s). On a timeout the entire process tree is killed and the build restarts from scratch. `run-and-publish.sh` retries the build up to 3 times (`BUILD_ATTEMPTS`, `RETRY_WAIT`) and publishes only if
 today's `india-opinion-<date>.epub` exists. Otherwise the live site is left
 untouched and a high-priority ntfy alert goes to `$NTFY_TOPIC` (default `sdm_dhari`).
