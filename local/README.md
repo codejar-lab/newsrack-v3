@@ -17,7 +17,7 @@ container: build.sh -> public/ ──force-push──> branch `pages-payload`
 ## Run
 ```bash
 podman build -f local/Containerfile --build-arg GIT_SHA=$(git rev-parse HEAD) -t newsrack-local .
-podman run -d --name newsrack --restart=always --env-file local/.env \
+podman run -d --name newsrack --restart=always --network=pasta:-4 --env-file local/.env \
   -v newsrack-meta:/app/meta newsrack-local
 podman exec newsrack /app/local/run-and-publish.sh     # publish now
 podman exec -e DRY_RUN=1 newsrack /app/local/run-and-publish.sh   # build only
@@ -26,3 +26,14 @@ podman logs -f newsrack
 Rebuild the image to pick up code changes. The `newsrack-meta` volume keeps the
 newsletter de-dup state between runs. For restart-on-boot, use
 `podman generate systemd`/a Quadlet (the host must be on at 06:00).
+
+## Why `--network=pasta:-4`
+Inside the rootless container every IPv6 connection times out (v4 is fine), and
+Python/calibre try IPv6 first, so each fetch burned its full timeout and retried.
+A normal 1-minute build then ran past calibre's 20-minute limit and produced no
+EPUB. Keep the container IPv4-only.
+
+## Failure behaviour
+`run-and-publish.sh` retries the build up to 3 times and publishes only if
+today's `india-opinion-<date>.epub` exists. Otherwise the live site is left
+untouched and a high-priority ntfy alert goes to `$NTFY_TOPIC` (default `sdm_dhari`).

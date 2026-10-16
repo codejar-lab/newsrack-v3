@@ -593,7 +593,7 @@ class DailyDigestBase(BasicNewsRecipe):
     summary_length = 0
     oldest_article = 1.15  # days (Live Mint RSS + Indian Express discovery)
     recursions = 0
-    timeout = 45  # bound each fetch; archived Indian Express images can be slow
+    timeout = 20  # bound each fetch: a stalled network once made single images take 6 min each
     masthead_url = 'https://www.thehindu.com/theme/images/th-online/thehindu-logo.svg'
 
     # When True, blocked feeds/sections are first tried through calibre's

@@ -13,13 +13,32 @@ export xteink_optimize=true
 export CALIBRE_CONFIG_DIRECTORY="$(mktemp -d)/calibre_config/"
 export PAYLOAD_BRANCH="${PAYLOAD_BRANCH:-pages-payload}"
 
-echo "=== $(date -Is) build start ==="
-rm -rf public output
-# the Pages comment line CI appends to index.html
-sh build.sh
-[ -f job_summary.md ] && cat job_summary.md
-echo -e "\n<"'!'"-- local build $(date -Is), $(ebook-convert --version | head -n1) -->" >> public/index.html
+ntfy_alert() {  # best-effort push; never fails the script
+  curl -fsS -m 20 -H "Title: Daily Digest build FAILED" -H "Priority: high" -H "Tags: rotating_light" \
+    -d "$1" "${NTFY_SERVER:-https://ntfy.sh}/${NTFY_TOPIC:-sdm_dhari}" >/dev/null 2>&1 || true
+}
+
+# A recipe that times out still lets build.sh exit 0 and leaves public/ without
+# its EPUB; publishing that would REPLACE the live site with an empty one.
+# So: retry the whole build, and only publish if the book exists.
+ATTEMPTS="${BUILD_ATTEMPTS:-3}"
+ok=0
+for i in $(seq 1 "$ATTEMPTS"); do
+  echo "=== $(date -Is) build start (attempt $i/$ATTEMPTS) ==="
+  rm -rf public output
+  sh build.sh || echo "build.sh exited non-zero"
+  [ -f job_summary.md ] && cat job_summary.md
+  if ls "public/india-opinion-$(date +%F).epub" >/dev/null 2>&1; then ok=1; break; fi
+  echo "!! no india-opinion EPUB produced on attempt $i"
+  [ "$i" -lt "$ATTEMPTS" ] && sleep 120
+done
 rm -rf "$CALIBRE_CONFIG_DIRECTORY"
+if [ "$ok" != 1 ]; then
+  echo "=== build failed after $ATTEMPTS attempts; NOT publishing (live site left untouched) ==="
+  ntfy_alert "No EPUB after $ATTEMPTS attempts at $(date +%H:%M). Live site left unchanged. Check: podman logs newsrack"
+  exit 1
+fi
+echo -e "\n<"'!'"-- local build $(date -Is), $(ebook-convert --version | head -n1) -->" >> public/index.html
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "DRY_RUN=1: built public/ ($(du -sh public | cut -f1)), not publishing"
