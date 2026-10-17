@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack - Indian Newspapers</title>
+<updated>2026-10-17T06:00:19Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>Daily Digest - 17.10.26</title>
+<summary>Daily Digest - 17.10.26 published at 2026-10-17 12:30AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;Closing The Loop&lt;/li&gt;&lt;li&gt;The Download: failed social media bans, and extending pets’ lives&lt;/li&gt;&lt;li&gt;Turn down the noise, let language find its way in&lt;/li&gt;&lt;li&gt;In France, student protest is symptom and warning&lt;/li&gt;&lt;li&gt;IDBI stake sale: Welcome signal, build on it&lt;/li&gt;&lt;li&gt;Attack on Navi Pillay’s Peace Nobel is really an attack on international law&lt;/li&gt;&lt;li&gt;On Imran Khan’s expulsion notice, the State has the power, but it must be kinder&lt;/li&gt;&lt;li&gt;Surjit Bhalla: An entitled generation and an Opposition that protests too much&lt;/li&gt;&lt;li&gt;Graphs, Data, Perspectives | Why bond yields are rising in all major countries — except China&lt;/li&gt;&lt;li&gt;How religious conversion affects eligibility for caste-based reservation&lt;/li&gt;&lt;li&gt;Special Summary Revision: What EC announcement means, how SSR differs from SIR&lt;/li&gt;&lt;li&gt;Metrics to minds — restoring purpose to universities&lt;/li&gt;&lt;li&gt;U.S. midterms as Donald Trump’s test, stakes for India&lt;/li&gt;&lt;li&gt;Necessary corrective&lt;/li&gt;&lt;li&gt;Ripples from future&lt;/li&gt;&lt;li&gt;A 10-minute boat ride that cost 13 young lives&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-10-17T00:30:12Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<author>
+<name>Indian Newspapers</name>
+</author>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/india-opinion-2026-10-17.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/india-opinion-2026-10-17.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/india-opinion-2026-10-17.epub"/>
+</entry>
+</feed>

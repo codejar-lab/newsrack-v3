@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack - Daily</title>
+<updated>2026-10-17T06:00:19Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/daily.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<entry>
+<id>inshorts</id>
+<title>Inshorts - 17.10.26</title>
+<summary>Inshorts - 17.10.26 published at 2026-10-17 12:30AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;Top Stories&lt;/li&gt;&lt;li&gt;Trending&lt;/li&gt;&lt;li&gt;Business&lt;/li&gt;&lt;li&gt;Politics&lt;/li&gt;&lt;li&gt;World&lt;/li&gt;&lt;li&gt;India&lt;/li&gt;&lt;li&gt;Startup&lt;/li&gt;&lt;li&gt;Technology&lt;/li&gt;&lt;li&gt;Sports&lt;/li&gt;&lt;li&gt;Science&lt;/li&gt;&lt;li&gt;Entertainment&lt;/li&gt;&lt;li&gt;Automobile&lt;/li&gt;&lt;li&gt;Education&lt;/li&gt;&lt;li&gt;Environment&lt;/li&gt;&lt;li&gt;Hatke&lt;/li&gt;&lt;li&gt;Miscellaneous&lt;/li&gt;&lt;/ul&gt;Section-wise 60-word news summaries from Inshorts (&lt;a href=&quot;https://inshorts.com/en/read&quot; rel=&quot;noreferrer nofollow noopener&quot; target=&quot;_blank&quot;&gt;https://inshorts.com/en/read&lt;/a&gt;).</content>
+<updated>2026-10-17T00:30:17Z</updated>
+<category term="Daily" label="Daily"/>
+<author>
+<name>Daily</name>
+</author>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/inshorts-2026-10-17.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/inshorts-2026-10-17.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/inshorts-2026-10-17.epub"/>
+</entry>
+</feed>
