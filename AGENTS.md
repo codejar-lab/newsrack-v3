@@ -10,8 +10,8 @@ news recipes, publishes them with an OPDS catalogue, and deploys to GitHub Pages
 via GitHub Actions.
 
 **This fork's focus** is a single custom periodical, **"Daily Digest"** (recipe
-slug `india-opinion`), tuned for the **Xteink X4 / X4 Pro** e-reader running the
-**CrossInk / CrossPoint** firmware (ESP32, ~380 KB RAM, 4-level greyscale
+slug `india-opinion`), tuned for the **Xteink X4 Pro** e-reader (touch) running
+**CrossInk 1.6.1** firmware (ESP32, ~380 KB RAM, 4-level greyscale
 SSD1677 panel, 480×800). `_recipes_custom.py` is deliberately pruned so the
 build produces only this one book — see "Gotchas".
 
@@ -297,10 +297,17 @@ mechanism to know about.
 
 ## Gotchas
 
-- **Only `india-opinion` builds.** `_recipes_custom.py` ends with
-  `recipes = [r for r in recipes if r.recipe == "india-opinion"]`, and that
-  recipe is `enable_on=True`. Every other recipe (custom and upstream) is
-  intentionally inactive. Don't "fix" this.
+- **Only `india-opinion` and `inshorts` build.** `_recipes_custom.py` ends with
+  `_active = {"india-opinion", "inshorts"}`. Every other recipe (custom and
+  upstream) is intentionally inactive. Don't "fix" this.
+- **Production builds run in the local container** (`local/`, supercronic at
+  06:00 IST), not on GitHub Actions — `build.yml` is manual-only. See
+  `local/README.md`. Rebuild the image to pick up code changes.
+- **Newsletter seen-URLs are staged.** `daily_digest._save_seen_urls` writes
+  `meta/daily_digest_seen_urls__*.json.pending`; `local/run-and-publish.sh`
+  promotes it only after a successful publish (CI sets `DIGEST_COMMIT_SEEN=1`
+  to write directly). Before this, test/DRY_RUN builds marked the next
+  morning's newsletters as already published.
 - **`tests_recipe_utils` fails** under Python 3.12 because `_recipe_utils.CoverOptions`
   is a mutable dataclass default (`cover_options: CoverOptions = CoverOptions()`).
   Pre-existing, unrelated to recipe work. CI runs on 3.10 where it's fine and

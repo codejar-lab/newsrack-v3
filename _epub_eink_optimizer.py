@@ -54,6 +54,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import unquote
 
 from PIL import Image, ImageEnhance, ImageFile, ImageOps
 
@@ -678,6 +679,24 @@ _EXTERNAL_LINK_RE = re.compile(
     r"(.*?)</a>",
     re.IGNORECASE | re.DOTALL,
 )
+
+# any remaining (in-book) link; its target is checked by _unwrap_dead_link
+_INTERNAL_LINK_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*([\"'])([^\"']*)\1[^>]*>(.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _unwrap_dead_link(m: "re.Match", base: Path) -> str:
+    """Keep only the text of a link whose in-book target file doesn't exist
+    (e.g. a source that stuffed prose into href). Such a link is a dead tap
+    on a touch CrossInk device; removing it adds no navigateToHref path."""
+    target = unquote(m.group(2).split("#", 1)[0]).strip()
+    if not target or (base / target).exists():
+        return m.group(0)
+    return m.group(3)
+
+
 # <img> whose src never got localised -> broken placeholder in an offline book
 _REMOTE_IMG_RE = re.compile(
     r"<img\b[^>]*\bsrc\s*=\s*([\"'])\s*(?:https?:)?//[^\"']*\1[^>]*>", re.IGNORECASE
@@ -947,6 +966,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _FOOTER_HR_RE.sub("", new)
         new = _FOOTER_P_RE.sub("", new)
         new = _EXTERNAL_LINK_RE.sub(r"\2", new)
+        new = _INTERNAL_LINK_RE.sub(lambda m: _unwrap_dead_link(m, path.parent), new)
         new = _REMOTE_IMG_RE.sub("", new)
         new = _SOURCE_RE.sub("", new)
         new = _MULTI_BR_RE.sub("<br/>", new)

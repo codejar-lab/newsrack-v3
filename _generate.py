@@ -44,6 +44,11 @@ ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(logging.DEBUG)
 logger.addHandler(ch)
 logger.setLevel(logging.INFO)
+# the e-ink optimizer logs to its own logger; without a handler its
+# "e-ink optimized ...: N -> M bytes" line never reaches the build log
+eink_logger = logging.getLogger("newsrack.eink_optimizer")
+eink_logger.addHandler(ch)
+eink_logger.setLevel(logging.INFO)
 
 publish_folder = Path("public")
 meta_folder = Path("meta")

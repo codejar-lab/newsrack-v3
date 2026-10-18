@@ -122,6 +122,8 @@ jobs:
           # optimize every epub output for small e-ink readers (Xteink X3/X4/X4 Pro)
           # by default; see _epub_eink_optimizer.py
           xteink_optimize: "true"
+          # write the newsletter seen-urls file directly (no .pending staging)
+          DIGEST_COMMIT_SEEN: "1"
         run: |
           sh build.sh
           if [[ -f 'job_summary.md' ]]; then cat 'job_summary.md' >> $GITHUB_STEP_SUMMARY; fi

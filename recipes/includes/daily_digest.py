@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import mechanize
 from html5_parser import parse
@@ -188,7 +188,13 @@ def _save_seen_urls(recipe_cls_name, seen):
                 pruned[url] = seen_date
         except Exception:
             continue  # drop anything with an unparseable date rather than keep it forever
+    # Staged as <path>.pending: local/run-and-publish.sh promotes it to the
+    # real file only after a successful publish, so test / DRY_RUN / failed
+    # builds can't mark tomorrow's newsletters as already published (that
+    # emptied the Oct 17 book). CI sets DIGEST_COMMIT_SEEN=1 to write directly.
     path = _seen_urls_path(recipe_cls_name)
+    if os.environ.get('DIGEST_COMMIT_SEEN') != '1':
+        path += '.pending'
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
@@ -349,8 +355,13 @@ _NON_ARTICLE_URL_RE = re.compile(
     re.IGNORECASE)
 
 
-def _lexical_html(node):
-    """Minimal renderer for Dot News' Lexical-editor JSON post body."""
+def _lexical_html(node, notes=None):
+    """Minimal renderer for Dot News' Lexical-editor JSON post body.
+
+    Dot News "explainer" links carry the explanation itself as the link url
+    (no http/mailto scheme). Rendered as-is they become a dead, tappable
+    in-book link; instead the term is bolded and the explanation follows the
+    enclosing block as a plain <blockquote>."""
     from xml.sax.saxutils import escape
     t = node.get('type')
     if t == 'text':
@@ -361,17 +372,32 @@ def _lexical_html(node):
         if f & 2:
             out = '<i>%s</i>' % out
         return out
-    inner = ''.join(_lexical_html(c) for c in node.get('children', []))
+    block = t in ('paragraph-element', 'heading-element', 'webiny-quote', 'root')
+    if block or notes is None:
+        notes = []
+    pending = notes
+    inner = ''.join(_lexical_html(c, notes) for c in node.get('children', []))
     if t == 'link':
-        return '<a href="%s">%s</a>' % (escape(node.get('url') or '', {'"': '&quot;'}), inner)
+        url = (node.get('url') or '').strip()
+        if not re.match(r'(?i)(https?|mailto):', url):
+            note = ' '.join(unquote(url).split())
+            if note:
+                pending.append(note)
+            return '<b>%s</b>' % inner
+        return '<a href="%s">%s</a>' % (escape(url, {'"': '&quot;'}), inner)
     if t == 'heading-element':
         tag = node.get('tag') if node.get('tag') in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6') else 'h3'
-        return '<%s>%s</%s>' % (tag, inner, tag)
-    if t == 'webiny-quote':
-        return '<blockquote><p>%s</p></blockquote>' % inner
-    if t == 'paragraph-element':
-        return '<p>%s</p>' % inner if inner.strip() else ''
-    return inner
+        out = '<%s>%s</%s>' % (tag, inner, tag)
+    elif t == 'webiny-quote':
+        out = '<blockquote><p>%s</p></blockquote>' % inner
+    elif t == 'paragraph-element':
+        out = '<p>%s</p>' % inner if inner.strip() else ''
+    else:
+        out = inner
+    if block:
+        out += ''.join('<blockquote><p>%s</p></blockquote>' % escape(n)
+                       for n in pending)
+    return out
 
 
 def _dotnews_full_html(url, index_cache):
@@ -911,11 +937,17 @@ class DailyDigestBase(BasicNewsRecipe):
             # seen_urls[url] == today_str means it was only ever seen
             # earlier *today*, so it's kept rather than skipped -- only a
             # url last seen on an *earlier* date gets dropped.
-            fresh = [e for e in fresh
-                     if seen_urls.get(e['url'], today_str) == today_str]
             if not fresh:
                 self.log('Newsletter %s: nothing new in the last %s days'
                          % (name, NEWSLETTER_MAX_AGE_DAYS))
+                continue
+            published = sorted({seen_urls[e['url']] for e in fresh
+                                if seen_urls.get(e['url'], today_str) != today_str})
+            fresh = [e for e in fresh
+                     if seen_urls.get(e['url'], today_str) == today_str]
+            if not fresh:
+                self.log('Newsletter %s: everything recent was already '
+                         'published (%s)' % (name, ', '.join(published)))
                 continue
             if weekly or _cadence_is_weekly(entries):
                 with self._lock:
