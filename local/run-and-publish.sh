@@ -13,6 +13,10 @@ export xteink_optimize=true
 export CALIBRE_CONFIG_DIRECTORY="$(mktemp -d)/calibre_config/"
 export PAYLOAD_BRANCH="${PAYLOAD_BRANCH:-pages-payload}"
 
+# same name as _generate.book_stem: <366-day-of-year>-<date>-<slug>, so the
+# newest book sorts first by name. The date is UTC, like the EPUB's pub date.
+book_stem() { printf '%03d-%s-%s' $((366 - 10#$(date -u +%j))) "$(date -u +%F)" "$1"; }
+
 ntfy_alert() {  # best-effort push; never fails the script. $1 msg [$2 title] [$3 priority] [$4 tags]
   curl -fsS -m 20 -H "Title: ${2:-Daily Digest build FAILED}" -H "Priority: ${3:-high}" \
     -H "Tags: ${4:-rotating_light}" \
@@ -69,7 +73,7 @@ for i in $(seq 1 "$ATTEMPTS"); do
   kill "$wd" 2>/dev/null || true
   kill -KILL -- "-$bp" 2>/dev/null || true   # nothing may outlive an attempt
   [ -f job_summary.md ] && cat job_summary.md
-  book="public/india-opinion-$(date +%F).epub"
+  book="public/$(book_stem india-opinion).epub"
   if [ -f "$book" ] && gaps="$(check_book "$book")"; then ok=1; break; fi
   echo "!! no usable india-opinion EPUB on attempt $i${gaps:+: $gaps}"
   gaps=""
@@ -82,7 +86,7 @@ if [ "$ok" != 1 ]; then
   rm -f $(seen_pending)
   exit 1
 fi
-[ -f "public/inshorts-$(date +%F).epub" ] || gaps="${gaps:+$gaps
+[ -f "public/$(book_stem inshorts).epub" ] || gaps="${gaps:+$gaps
 }no Inshorts EPUB"
 echo -e "\n<"'!'"-- local build $(date -Is), $(ebook-convert --version | head -n1) -->" >> public/index.html
 

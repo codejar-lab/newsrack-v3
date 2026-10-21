@@ -347,6 +347,19 @@ def _maybe_optimize_for_eink(recipe: Recipe, epub_path: Path) -> None:
         logger.exception(f"Error optimizing '{epub_path}' for e-ink")
 
 
+def book_stem(slug: str, pub_date: datetime) -> str:
+    """
+    File stem for a published book: ``<NNN>-<YYYY-MM-DD>-<slug>``.
+
+    NNN counts *down* through the year (366 - day-of-year), so a plain
+    ascending sort by file name lists the newest book first -- it always
+    stays on top when a whole year of EPUBs sits in one folder. The counter
+    restarts each January, i.e. every year goes in its own folder.
+    """
+    countdown = 366 - pub_date.timetuple().tm_yday
+    return f"{countdown:03d}-{pub_date:%Y-%m-%d}-{slug}"
+
+
 def _find_output(folder_path: Path, slug: str, ext: str) -> List[Path]:
     """
     This is an improvement over using just glob because it finds outputs
@@ -354,9 +367,16 @@ def _find_output(folder_path: Path, slug: str, ext: str) -> List[Path]:
     Previously, if 2 recipes have similar slugs, e.g. "wsj" vs "wsj-print",
     using glob will result in the wrong outputs being detected.
     """
-    slug_match_re = re.compile(slug + r"(-\d{4}-\d{2}-\d{2})?\." + ext)
-    res = folder_path.glob(f"{slug}*.{ext}")
-    return [r for r in res if slug_match_re.match(r.name)]
+    # plain "<slug>.<ext>" (fresh calibre output), the legacy
+    # "<slug>-<date>.<ext>" and the current "<NNN>-<date>-<slug>.<ext>"
+    slug_match_re = re.compile(
+        r"(?:\d{3}-\d{4}-\d{2}-\d{2}-)?"
+        + re.escape(slug)
+        + r"(?:-\d{4}-\d{2}-\d{2})?\."
+        + re.escape(ext)
+    )
+    res = folder_path.glob(f"*{slug}*.{ext}")
+    return [r for r in res if slug_match_re.fullmatch(r.name)]
 
 
 def _get_cached_files(recipe: Recipe, cached: Dict):
@@ -718,7 +738,7 @@ def run(
             if mobj:
                 title = mobj.group("title")
             rename_file_name = Path(
-                f"{recipe.slug}-{pub_date:%Y-%m-%d}.{recipe.src_ext}"
+                f"{book_stem(recipe.slug, pub_date)}.{recipe.src_ext}"
             )
 
             comments = []
@@ -793,7 +813,7 @@ def run(
 
             index[recipe.slug].append(
                 {
-                    "filename": f"{recipe.slug}-{pub_date:%Y-%m-%d}.{recipe.src_ext}",
+                    "filename": f"{book_stem(recipe.slug, pub_date)}.{recipe.src_ext}",
                     "published": pub_date.timestamp(),
                 }
             )
@@ -874,7 +894,7 @@ def run(
                             recipe=recipe,
                             title=title,
                             file=target_file_name,
-                            rename_to=f"{recipe.slug}-{pub_date:%Y-%m-%d}.{ext}",
+                            rename_to=f"{book_stem(recipe.slug, pub_date)}.{ext}",
                             published_dt=pub_date,
                             description=comments,
                             articles=comments[1:-1],
@@ -882,7 +902,7 @@ def run(
                     )
                     index[recipe.slug].append(
                         {
-                            "filename": f"{recipe.slug}-{pub_date:%Y-%m-%d}.{ext}",
+                            "filename": f"{book_stem(recipe.slug, pub_date)}.{ext}",
                             "published": pub_date.timestamp(),
                         }
                     )

@@ -156,6 +156,41 @@ WEEKLY_GAP_DAYS = 4              # avg days between posts to count as "weekly"
 _SEEN_URLS_RETENTION_DAYS = 14
 
 
+# A newsletter issue longer than this (in words), with several stories under same-level
+# headings (The Daily Brief), becomes one chapter per story: faster page loads
+# on the ESP32 and a TOC entry per story.
+SPLIT_MIN_WORDS = 2500
+# newspaper (not newsletter) sources: one image per article, and anything
+# shorter than MIN_ARTICLE_WORDS is a photo/caption item, not an article
+NEWS_DOMAINS = ('hindu', 'ie', 'mint', 'bs')
+MIN_ARTICLE_WORDS = 80
+_HEADING_TAG_RE = {lvl: re.compile(r'<h%d\b[^>]*>(.*?)</h%d>' % (lvl, lvl),
+                                   re.IGNORECASE | re.DOTALL)
+                   for lvl in (1, 2)}
+
+
+def _split_stories(body, title):
+    '''[(title, html), ...] -- body split before each top-level story
+    heading (h1, else h2), the intro staying with the first story.'''
+    # measured in visible words, not HTML size: a short but markup-heavy issue
+    # (Groww Digest) must stay one chapter
+    if len(re.sub(r'<[^>]+>', ' ', body).split()) < SPLIT_MIN_WORDS:
+        return [(title, body)]
+    for lvl in (1, 2):
+        heads = list(_HEADING_TAG_RE[lvl].finditer(body))
+        if len(heads) >= 2:
+            break
+    else:
+        return [(title, body)]
+    cuts = [h.start() for h in heads[1:]]
+    out = [(title, body[:cuts[0]])]
+    for i, h in enumerate(heads[1:]):
+        end = cuts[i + 1] if i + 1 < len(cuts) else len(body)
+        htitle = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', h.group(1))).strip()
+        out.append((htitle or title, body[h.start():end]))
+    return out
+
+
 def _seen_urls_path(recipe_cls_name):
     # meta/ is the CI job's own cross-run artifact folder -- downloaded at
     # the start of every GitHub Actions run and re-uploaded at the end (see
@@ -281,6 +316,8 @@ _NL_PROMO_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
     r'learn how to apply now',
     r'thank you for reading\.? do share',
     r'how did you like (?:today|this)',
+    r'^our goal with the daily brief', r'you can listen to the podcast',
+    r'^just a quick heads-up before we dive in',
     r'rate (?:today|this) (?:edition|newsletter)',
     r"that.s it from us", r'send us your book',
     r"don.t forget to (?:share|tell us)", r'hit reply to this email',
@@ -870,13 +907,14 @@ class DailyDigestBase(BasicNewsRecipe):
         return True
 
     # ------------------------------------------------------------------ index
+    # book order: the opinion pages first, newsletters after them
     SOURCES = (
-        ('%s', 'parse_newsletters', 'fetch_newsletters'),
         ('Indian Express: %s', 'parse_indian_express', 'fetch_indian_express'),
         ('The Hindu: %s', 'parse_hindu', 'fetch_hindu'),
         ('Live Mint: %s', 'parse_livemint', 'fetch_livemint'),
         ('Business Standard: %s', 'parse_business_standard',
          'fetch_business_standard'),
+        ('%s', 'parse_newsletters', 'fetch_newsletters'),
     )
 
     def _run_source(self, name):
@@ -975,12 +1013,23 @@ class DailyDigestBase(BasicNewsRecipe):
                     self.log('Newsletter %s: no feed body (subscribers-only), '
                              'skipping %s' % (name, e['url']))
                     continue
+                extra = []  # further stories split off this issue
                 if has_body:
-                    c = '<div class="x-newsletter">' + body + '</div>'
-                    pad = CALIBRE_EMBEDDED_MIN_CHARS + 400 - len(c)
-                    if pad > 0:
-                        c += '<!--' + ' ' * pad + '-->'
-                    art['content'] = c
+                    parts = _split_stories(body, e['title'])
+                    for n, (ptitle, pbody) in enumerate(parts):
+                        part = art if n == 0 else dict(art, title=ptitle,
+                                                       url='%s#story-%d' % (e['url'], n))
+                        c = '<div class="x-newsletter">' + pbody + '</div>'
+                        pad = CALIBRE_EMBEDDED_MIN_CHARS + 400 - len(c)
+                        if pad > 0:
+                            c += '<!--' + ' ' * pad + '-->'
+                        part['content'] = c
+                        if n:
+                            self._set_domain(part['url'], 'newsletter')
+                            extra.append(part)
+                    if len(parts) > 1:
+                        self.log('Newsletter %s: split into %d stories'
+                                 % (name, len(parts)))
                 # A Hindu link with no feed body is downloaded as the bare
                 # article page, site header, menus and footer included. Route
                 # it through _clean_hindu (which trims to the article body)
@@ -990,9 +1039,11 @@ class DailyDigestBase(BasicNewsRecipe):
                        else 'newsletter')
                 self._set_domain(e['url'], dom)
                 arts.append(art)
+                arts.extend(extra)
                 newly_seen[e['url']] = today_str
             if arts:
-                out.append(('NL: ' + name, arts))
+                # short section name: "Daily Capsule (YourStory)" -> "Daily Capsule"
+                out.append((re.sub(r'\s*\(.*\)$', '', name), arts))
 
         if newly_seen:
             seen_urls.update(newly_seen)
@@ -1547,10 +1598,33 @@ class DailyDigestBase(BasicNewsRecipe):
             self._clean_ie(soup, wb_ts)
         # 'bs' is already clean from _bs_raw
 
+        if dom in NEWS_DOMAINS:
+            self._news_reading_trim(soup)
+
         for attr in self.remove_attributes:
             for x in soup.findAll(attrs={attr: True}):
                 del x[attr]
         return soup
+
+    def _news_reading_trim(self, soup):
+        '''Newspaper articles: keep only the lead image (on a 4-grey panel a
+        news photo is mostly a grey block that costs a page turn), and drop
+        photo-only "articles" (a picture plus its caption) entirely.'''
+        for img in soup.findAll('img')[1:]:
+            node = img
+            while (node.parent is not None
+                   and node.parent.name in ('picture', 'a', 'span', 'figure')
+                   and len(self._norm_txt(self.tag_to_string(node.parent))) < 400):
+                node = node.parent
+            node.extract()
+        body = soup.find('body') or soup
+        # visible text only: Hindu pages still carry <script> JSON in the body
+        # at this point, which made a captioned photo look like an article
+        words = sum(len(t.split()) for t in body.findAll(string=True)
+                    if t.parent is not None
+                    and t.parent.name not in ('script', 'style', 'noscript', 'title'))
+        if words < MIN_ARTICLE_WORDS:
+            self.abort_article('only %d words (photo/caption item)' % words)
 
     # --- per-source cleaners --------------------------------------------- #
     @staticmethod
@@ -1584,6 +1658,15 @@ class DailyDigestBase(BasicNewsRecipe):
 
         self._strip_ad_blocks(soup)
         self._strip_hindu_chrome(soup)
+
+        # calibre puts the article title on top as an <h2>; issues (and the
+        # per-story splits of _split_stories) repeat it as their own heading
+        heads = soup.findAll(['h1', 'h2', 'h3'])
+        if heads:
+            first = self._norm_txt(self.tag_to_string(heads[0])).lower()
+            for h in heads[1:]:
+                if first and self._norm_txt(self.tag_to_string(h)).lower() == first:
+                    h.extract()
 
         # collapse a wrapper left holding nothing but whitespace
         for d in soup.findAll(['div', 'section']):
@@ -1781,6 +1864,56 @@ class DailyDigestBase(BasicNewsRecipe):
                 h.endswith('/?utm_source=newbanner')
                 or 'utm_source=newsletter' in h)}):
             a.extract()
+
+        # AI narration player, AI-translation notice, feedback popup/toast:
+        # interactive widgets that are only noise ("0.5x 0.75x 1x ...") in a book
+        sp = soup.find(id='narrationText')
+        player = sp.find_parent('div') if sp is not None else None
+        if player is not None and len(self._norm_txt(self.tag_to_string(player))) < 400:
+            player.extract()
+        for wid in ('aiInfoBackdrop', 'popupBackdrop', 'feedbackToast',
+                    'aiInfoOpenBtn', 'narrationText'):
+            for x in soup.findAll(id=wid):
+                x.extract()
+        # the audio ("Listen 00:00") widget under the lead image: climb to the
+        # outermost wrapper that holds nothing but those two words
+        for sp in soup.findAll(string=re.compile(r'^\s*Listen\s*$')):
+            node = sp.parent
+            while (node is not None and node.parent is not None
+                   and re.fullmatch(r'(?:Listen|[0-9:]+|\s)*',
+                                    self.tag_to_string(node.parent) or '')):
+                node = node.parent
+            if node is not None and node.name not in ('body', 'html', '[document]'):
+                node.extract()
+        # ...and the player's lone "00:00" clock
+        for t in soup.findAll(string=re.compile(r'^\s*\d{1,2}:\d{2}\s*$')):
+            if t.parent is not None and t.parent.name == 'span':
+                t.parent.extract()
+        for x in soup.findAll(attrs={'hidden': True}):
+            x.extract()
+        for x in soup.findAll(['input', 'select', 'textarea']):
+            x.extract()
+
+        # the "Opinion"/"Explained" kicker printed inside the headline itself
+        for h in soup.findAll(['h1', 'h2']):
+            first = h.find('span')
+            if (first is not None and self._norm_txt(self.tag_to_string(first))
+                    in ('Opinion', 'Explained', 'Premium', 'Express Premium')):
+                first.extract()
+
+        # "5 min read" "New Delhi" "Updated: ..." are separate spans with no
+        # spacing, rendering as "5 min readNew DelhiUpdated: ..." -- join the
+        # useful parts with a separator and drop the reading-time estimate
+        for t in soup.findAll(string=re.compile(r'^\s*\d+\s*min read\s*$', re.I)):
+            line = t.parent.parent if t.parent is not None else None
+            if line is None or line.parent is None:
+                continue
+            bits = [self._norm_txt(self.tag_to_string(c))
+                    for c in line.findAll(recursive=False)]
+            bits = [b for b in bits if b and not re.match(r'^\d+\s*min read$', b, re.I)]
+            if bits and len(' '.join(bits)) < 160:
+                line.clear()
+                line.append(' · '.join(bits))
 
         for t in soup.findAll(string=re.compile(
                 r'^\s*(?:Subscribe to see fewer ads|Story continues below|'

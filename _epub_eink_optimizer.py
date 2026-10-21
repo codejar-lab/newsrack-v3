@@ -52,6 +52,7 @@ import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from html import escape as _xml_escape, unescape as _xml_unescape
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import unquote
@@ -135,7 +136,7 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base5*/"
+_CSS_BASE_MARKER = "/*eink-base6*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
@@ -154,9 +155,8 @@ _CSS_EINK_BASE = (
     + "margin-bottom:0.3em !important;}"
     + "h1{font-size:1.3em !important;}h2{font-size:1.15em !important;}"
     + "h3{font-size:1.05em !important;}"
-    # body text: left-aligned (justified lines open big word gaps on a
-    # 4-level panel), one small gap between paragraphs, no stacked margins
-    + "p,li,blockquote{text-align:left !important;}"
+    # body text: alignment is left to the reader's own setting (no forced
+    # text-align), one small gap between paragraphs, no stacked margins
     + "p{margin-top:0 !important;margin-bottom:0.4em !important;}"
     + ".caption,.cap,#img-cap{text-align:center !important;}"
     # inline small/legacy <font> sizing makes some feeds (word-of-the-day
@@ -642,6 +642,36 @@ def _clamp_small_font_sizes(css: str) -> str:
     return _SMALL_FONT_SIZE_RE.sub(repl, css)
 
 
+_FONT_SIZE_EM_RE = re.compile(
+    r"font-size:\s*([0-9]*\.?[0-9]+)(em|%)", re.IGNORECASE
+)
+_MARGIN_BOTTOM_EM_RE = re.compile(
+    r"margin-bottom:\s*([0-9]*\.?[0-9]+)em", re.IGNORECASE
+)
+MAX_FONT_EM = 1.25
+MAX_MARGIN_BOTTOM_EM = 0.6
+
+
+def _clamp_large_sizes(css: str) -> str:
+    """calibre's per-element classes beat the base h1/h2/p rules on CrossInk
+    (tag -> class -> tag.class priority), so headlines rendered at 1.5-1.83em
+    (3-4 wrapped lines on a 480px panel) and paragraphs kept a full 1em gap.
+    Rewrite the declared values in place instead: font-size capped at
+    MAX_FONT_EM, any em bottom margin capped at MAX_MARGIN_BOTTOM_EM."""
+    def font(m: "re.Match") -> str:
+        value, unit = float(m.group(1)), m.group(2)
+        em = value / 100 if unit == "%" else value
+        return "font-size:%sem" % MAX_FONT_EM if em > MAX_FONT_EM else m.group(0)
+
+    def margin(m: "re.Match") -> str:
+        if float(m.group(1)) > MAX_MARGIN_BOTTOM_EM:
+            return "margin-bottom:%sem" % MAX_MARGIN_BOTTOM_EM
+        return m.group(0)
+
+    css = _FONT_SIZE_EM_RE.sub(font, css)
+    return _MARGIN_BOTTOM_EM_RE.sub(margin, css)
+
+
 def _strip_css(csss: List[Path]) -> None:
     for css in csss:
         content = _read_text(css)
@@ -653,6 +683,7 @@ def _strip_css(csss: List[Path]) -> None:
         content = _minify_css(content)
         content = _clamp_small_font_sizes(content)
         content = _normalize_margins(content)
+        content = _clamp_large_sizes(content)
         content = content + "\n" + _CSS_EINK_BASE
         css.write_text(content, encoding="utf-8")
 
@@ -716,6 +747,8 @@ _JUNK_ATTR_RE = re.compile(
 
 def _strip_junk_attrs(html: str) -> str:
     return _OPEN_TAG_RE.sub(lambda m: _JUNK_ATTR_RE.sub("", m.group(0)), html)
+
+
 # Latin ligature codepoints -> ASCII, so books render on fonts (EpdFont / SD
 # fonts) that have no ligature glyphs
 _LIGATURES = {
@@ -726,6 +759,11 @@ _LIGATURE_RE = re.compile("[" + "".join(_LIGATURES) + "]")
 # <picture><source ...> — the firmware only wants a single <img>; a leftover
 # <source> with a remote/responsive srcset can shadow it and render nothing
 _SOURCE_RE = re.compile(r"<source\b[^>]*/?>", re.IGNORECASE)
+# <pre> never wraps and <code> switches to a monospace face; newsletters use
+# them for glossary terms (Groww), which then run off the 480px panel
+_PRE_OPEN_RE = re.compile(r"<pre\b[^>]*>", re.IGNORECASE)
+_PRE_CLOSE_RE = re.compile(r"</pre\s*>", re.IGNORECASE)
+_CODE_TAG_RE = re.compile(r"</?code\b[^>]*>", re.IGNORECASE)
 
 # CrossInk's layout engine special-cases a lone empty block produced by a
 # <br> (ChapterHtmlSlimParser::startNewTextBlock, the `fromBrElement` /
@@ -772,29 +810,6 @@ _NAVBAR_RE = re.compile(
 _NAV_LINK_RE = re.compile(
     r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
 )
-
-
-def _shrink_navbar(m: "re.Match") -> str:
-    links = []
-    for href, txt in _NAV_LINK_RE.findall(m.group(0)):
-        label = re.sub(r"<[^>]+>", "", txt)
-        label = re.sub(r"\s+", " ", label).strip()
-        if label:
-            # inline styles too: CrossInk's renderer ignores the `.eink-nav a`
-            # descendant rule and the `x-small` keyword, so spell it out here
-            links.append(
-                '<a href="%s" style="text-decoration:none;color:#666">%s</a>'
-                % (href, label)
-            )
-    if not links:
-        return ""
-    # no nested <small>: it compounded with the 60% size and left "Next"
-    # unreadably tiny on the device
-    return (
-        '<p class="eink-nav" style="font-size:90%;line-height:1.1;'
-        'text-align:center;margin:1px 0 4px;color:#666">'
-        + " · ".join(links) + "</p>"
-    )
 
 
 # calibre's book-level "index of feeds/sections" page (the cover-adjacent
@@ -973,7 +988,13 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
         new = _EMPTY_P_RE.sub("", new)
         new = _BR_LEADING_RE.sub(r"\1", new)
         new = _BR_BEFORE_BLOCK_RE.sub("", new)
-        new = _NAVBAR_RE.sub(_shrink_navbar, new)
+        # the Prev/Articles/Sections/Next bar is dropped, not shrunk: reading
+        # is sequential page turns, and a *tapped* internal link lands on a
+        # position CrossInk doesn't persist across sleep (see AGENTS.md)
+        new = _NAVBAR_RE.sub("", new)
+        new = _PRE_OPEN_RE.sub("<p>", new)
+        new = _PRE_CLOSE_RE.sub("</p>", new)
+        new = _CODE_TAG_RE.sub("", new)
         new = _TOC_TABLE_RE.sub("", new)
         new = _inline_single_article_summary(new, path, headline_lists)
         new = _SUMMARY_TEXT_RE.sub("", new)
@@ -990,6 +1011,95 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)
         if new != content:
             path.write_text(new, encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+#  per-feed "Articles" stub pages                                              #
+# --------------------------------------------------------------------------- #
+_SUMMARY_HREF_RE = re.compile(
+    r'<a\b[^>]*\bclass="[^"]*\bsummary_headline\b[^"]*"[^>]*\bhref="([^"#]+)'
+    r'|<a\b[^>]*\bhref="([^"#]+)"[^>]*\bclass="[^"]*\bsummary_headline\b',
+    re.IGNORECASE,
+)
+_BODY_OPEN_RE = re.compile(r"(<body\b[^>]*>)", re.IGNORECASE)
+_NCX_POINT_RE = re.compile(
+    r"<navPoint\b[^>]*>\s*<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*"
+    r'<content\s+src="([^"]+)"',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _drop_feed_stub_pages(htmls: List[Path], opfs: List[Path],
+                          ncxs: List[Path]) -> None:
+    """calibre gives every feed a stub page listing its articles: one extra
+    page per section (18 in a Daily Digest) that the device's own TOC already
+    covers. Drop each stub from the spine/manifest, point its TOC entry at the
+    feed's first article, and put the section name as a small label at the top
+    of that article instead. Stubs that carry an inlined headline list
+    (_inline_single_article_summary, e.g. Inshorts) are real content and kept."""
+    stubs: Dict[Path, Path] = {}
+    for path in htmls:
+        content = _read_text(path)
+        if (content is None or not _ARTICLE_SUMMARY_OPEN_RE.search(content)
+                or _HL_LIST_RE.search(content)):
+            continue
+        m = _SUMMARY_HREF_RE.search(content)
+        if m:
+            stubs[path.resolve()] = (path.parent / (m.group(1) or m.group(2))).resolve()
+    if not stubs:
+        return
+
+    labels: Dict[Path, str] = {}
+    for ncx in ncxs:
+        text = _read_text(ncx)
+        if text is None:
+            continue
+        for label, src in _NCX_POINT_RE.findall(text):
+            target = (ncx.parent / src.split("#", 1)[0]).resolve()
+            if target in stubs:
+                labels[target] = re.sub(r"\s+", " ", label).strip()
+
+        def repoint(m: "re.Match") -> str:
+            src = m.group(1)
+            target = (ncx.parent / src.split("#", 1)[0]).resolve()
+            if target not in stubs:
+                return m.group(0)
+            return 'src="%s"' % os.path.relpath(stubs[target], ncx.parent.resolve())
+        new = re.sub(r'src="([^"]+)"', repoint, text)
+        if new != text:
+            ncx.write_text(new, encoding="utf-8")
+
+    for opf in opfs:
+        text = _read_text(opf)
+        if text is None:
+            continue
+        ids = []
+        for m in re.finditer(r"<item\b[^>]*>", text):
+            tag = m.group(0)
+            href = re.search(r'\bhref="([^"]+)"', tag)
+            iid = re.search(r'\bid="([^"]+)"', tag)
+            if href and iid and (opf.parent / href.group(1)).resolve() in stubs:
+                ids.append(iid.group(1))
+                text = text.replace(tag, "")
+        for iid in ids:
+            text = re.sub(r'<itemref\b[^>]*\bidref="%s"[^>]*/>\s*' % re.escape(iid),
+                          "", text)
+        opf.write_text(text, encoding="utf-8")
+
+    for stub, first in stubs.items():
+        label = labels.get(stub)
+        if label:
+            content = _read_text(first)
+            if content is not None:
+                tag = ('<p class="eink-section" style="font-size:85%%;'
+                       'font-weight:bold;margin:0 0 0.3em;color:#444">%s</p>'
+                       % _xml_escape(_xml_unescape(label).upper()))
+                content = _BODY_OPEN_RE.sub(lambda m: m.group(1) + tag, content, 1)
+                first.write_text(content, encoding="utf-8")
+        try:
+            stub.unlink()
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -1055,8 +1165,10 @@ def optimize_epub_for_eink(
         if opts.strip_css:
             _strip_css(b["css"])
         _clean_html_files(b["html"], opts)
+        ncx = [p for p in b["other"] if p.suffix.lower() == ".ncx"]
+        _drop_feed_stub_pages(b["html"], b["opf"], ncx)
+        b["html"] = [p for p in b["html"] if p.exists()]
         if renames:
-            ncx = [p for p in b["other"] if p.suffix.lower() == ".ncx"]
             _rewrite_image_refs(
                 b["opf"] + b["html"] + b["css"] + ncx, renames)
 

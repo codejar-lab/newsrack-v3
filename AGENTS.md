@@ -242,7 +242,24 @@ surrounding `<div class="article_summary">` completely untouched — this
 doesn't add, remove, or convert any link, so it carries none of the
 navigateToHref/resume risk documented above.
 
-**Also as of 2026-09-15: `daily_digest`'s newsletter articles no longer
+**Update (2026-10-21): reading-experience pass.** The Prev/Articles/
+Sections/Next bar is now *removed* (`_NAVBAR_RE.sub("")`, was
+`_shrink_navbar`) — reading is sequential page turns and tapped links hit the
+resume gap above. Per-feed "Articles" stub pages are dropped from the
+spine/manifest by `_drop_feed_stub_pages`; their TOC entry is repointed to the
+feed's first article, which gets a small `eink-section` label instead (stubs
+carrying an inlined `hl` list, i.e. Inshorts, are kept). CSS: no forced
+`text-align` (device setting decides), `_clamp_large_sizes` caps font-size at
+1.25em and em bottom margins at 0.6em in place (marker `eink-base6`);
+`<pre>`/`<code>` become plain paragraphs. In `daily_digest`: opinion pages come
+first, newsletters last with short names (no `NL:`); newspaper articles keep
+only their lead image and are aborted below `MIN_ARTICLE_WORDS` (photo/caption
+items); newsletter issues over `SPLIT_MIN_WORDS` split into one chapter per
+story (`_split_stories`); a heading repeating the title is dropped. Published
+books are named `<366-day-of-year>-<date>-<slug>.epub` (`_generate.book_stem`)
+so the newest sorts first in a per-year folder.
+
+
 repeat across consecutive daily builds.** `NEWSLETTER_MAX_AGE_DAYS`
 (1.15 days) is wider than the ~1 day between builds, so an entry posted
 late in one day's window could still look "fresh" the next day too — the
