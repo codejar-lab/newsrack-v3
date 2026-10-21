@@ -37,10 +37,21 @@ css = "".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.en
 if not re.search(r"/\*eink-base\d+\*/", css):
     print("EPUB is not e-ink optimized"); sys.exit(1)
 ncx = "".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith(".ncx"))
-labels = re.findall(r"<text>(.*?)</text>", ncx, re.S)
-for prefix, name in (("Indian Express:", "Indian Express"), ("The Hindu:", "The Hindu"), ("NL: ", "newsletters")):
-    if not any(l.strip().startswith(prefix) for l in labels):
+import xml.etree.ElementTree as ET
+ns = {"n": "http://www.daisy.org/z3986/2005/ncx/"}
+try:
+    nav = ET.fromstring(ncx).find("n:navMap", ns)
+    labels = [p.findtext("n:navLabel/n:text", "", ns).strip()
+              for p in nav.findall("n:navPoint", ns)]  # top-level = sections
+except Exception:
+    labels = []
+papers = ("Indian Express:", "The Hindu:", "Live Mint:", "Business Standard:")
+for prefix, name in (("Indian Express:", "Indian Express"), ("The Hindu:", "The Hindu")):
+    if not any(l.startswith(prefix) for l in labels):
         print("no %s section" % name)
+# newsletter sections carry their own short names (no prefix)
+if not any(l and not l.startswith(papers) for l in labels):
+    print("no newsletters section")
 PY
 }
 
