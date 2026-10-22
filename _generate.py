@@ -209,10 +209,19 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                         doc, "id", books[0].recipe.slug if books else recipe_name
                     )
                 )
+                # CrossInk's catalogue browser ignores the server file name and
+                # saves a download as "<author> - <title>.epub" (or just
+                # "<title>.epub" when the entry has no author), and its file
+                # browser sorts by name, ascending and number-aware. So the
+                # title leads with the day countdown (see book_stem) and the
+                # entry carries no <author>: the saved files then list newest
+                # first in one folder. No dots in the title either -- the
+                # firmware's sanitiser would read ".26" as a file extension.
                 entry.appendChild(
                     simple_tag(
                         doc,
                         "title",
+                        f"{_countdown(books[0].published_dt)} "
                         f"{books[0].title or recipe_name}",
                     )
                 )
@@ -250,9 +259,8 @@ def _write_opds(generated_output: Dict, recipe_covers: Dict, publish_site: str) 
                         attributes={"term": category, "label": category.title()},
                     )
                 )
-                author_tag = simple_tag(doc, "author")
-                author_tag.appendChild(simple_tag(doc, "name", category.title()))
-                entry.appendChild(author_tag)
+                # (no per-entry <author>: see the title note above; the feed
+                # itself still carries one, as Atom requires)
 
                 covers = recipe_covers.get(books[0].recipe.slug)
                 if covers:
@@ -347,6 +355,12 @@ def _maybe_optimize_for_eink(recipe: Recipe, epub_path: Path) -> None:
         logger.exception(f"Error optimizing '{epub_path}' for e-ink")
 
 
+def _countdown(pub_date: datetime) -> str:
+    """366 - day-of-year, zero-padded: smaller = newer, so an ascending
+    (natural) name sort lists the newest book first. Restarts each January."""
+    return f"{366 - pub_date.timetuple().tm_yday:03d}"
+
+
 def book_stem(slug: str, pub_date: datetime) -> str:
     """
     File stem for a published book: ``<NNN>-<YYYY-MM-DD>-<slug>``.
@@ -356,8 +370,7 @@ def book_stem(slug: str, pub_date: datetime) -> str:
     stays on top when a whole year of EPUBs sits in one folder. The counter
     restarts each January, i.e. every year goes in its own folder.
     """
-    countdown = 366 - pub_date.timetuple().tm_yday
-    return f"{countdown:03d}-{pub_date:%Y-%m-%d}-{slug}"
+    return f"{_countdown(pub_date)}-{pub_date:%Y-%m-%d}-{slug}"
 
 
 def _find_output(folder_path: Path, slug: str, ext: str) -> List[Path]:
@@ -771,7 +784,15 @@ def run(
                 )
             )
 
-            pseudo_series_index = pub_date.year * 1000 + pub_date.timetuple().tm_yday
+            # CrossInk's Library "Series" sort: series name, then series_index.
+            # One series per year ("Daily Digest 2026") numbered by day of year
+            # (#295) -- chronological, short to display, restarts each January.
+            series_name = "%s %d" % (
+                re.sub(r"\s*-\s*[\d.-]+$", "", title or "").strip()
+                or recipe.name or recipe.slug,
+                pub_date.year,
+            )
+            pseudo_series_index = pub_date.timetuple().tm_yday
             # (rename_file_name != source_file_name) checks that it is a newly generated file
             # so that we don't regenerate the cover needlessly
             if (
@@ -790,7 +811,7 @@ def run(
                         "ebook-meta",
                         str(source_file_path),
                         f"--cover={str(cover_file_path)}",
-                        f"--series={recipe.name}",
+                        f"--series={series_name}",
                         f"--index={pseudo_series_index}",
                         f"--publisher={publish_site}",
                     ]
@@ -803,7 +824,7 @@ def run(
                 series_cmd = [
                     "ebook-meta",
                     str(source_file_path),
-                    f"--series={recipe.name}",
+                    f"--series={series_name}",
                     f"--index={pseudo_series_index}",
                     f"--publisher={publish_site}",
                 ]
@@ -827,7 +848,7 @@ def run(
                     "ebook-convert",
                     str(source_file_path),
                     str(target_file_path),
-                    f"--series={recipe.name}",
+                    f"--series={series_name}",
                     f"--series-index={pseudo_series_index}",
                     f"--publisher={publish_site}",
                 ]

@@ -74,7 +74,9 @@ _STATE_RE = re.compile(r'window\.__STATE__\s*=\s*(\{.*?\})\s*;?\s*</script>', re
 
 
 class Inshorts(BasicNewsRecipe):
-    title = _name + ' - ' + datetime.now().strftime('%d.%m.%y')
+    # year-first date: CrossInk's Library "Title" sort compares the folded
+    # title byte-wise, so only YYYY-MM-DD orders the issues chronologically
+    title = _name + ' - ' + datetime.now().strftime('%Y-%m-%d')
     __author__ = 'newsrack'
     description = (
         'Section-wise 60-word news summaries from Inshorts '

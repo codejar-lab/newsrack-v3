@@ -633,9 +633,11 @@ def chromium_get(storage, url, timeout=45):
 
 
 class DailyDigestBase(BasicNewsRecipe):
-    title = _name + ' - ' + datetime.now().strftime('%d.%m.%y')
+    # year-first date: CrossInk's Library "Title" sort compares the folded
+    # title byte-wise, so only YYYY-MM-DD orders the issues chronologically
+    title = _name + ' - ' + datetime.now().strftime('%Y-%m-%d')
     # calibre appends this to the title on conversion; empty => the shipped book
-    # is just "Daily Digest - dd.mm.yy" with no trailing " [Weekday, dd Mon YYYY]"
+    # is just "Daily Digest - YYYY-MM-DD" with no trailing " [Weekday, dd Mon YYYY]"
     timefmt = ''
     __author__ = 'newsrack'
     description = (
