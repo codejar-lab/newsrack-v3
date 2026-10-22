@@ -113,3 +113,5 @@ target/
 .ipynb_checkpoints
 
 local/.env
+
+simulator/

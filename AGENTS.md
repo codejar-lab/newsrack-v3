@@ -245,17 +245,31 @@ navigateToHref/resume risk documented above.
 **Update (2026-10-21): reading-experience pass.** The Prev/Articles/
 Sections/Next bar is now *removed* (`_NAVBAR_RE.sub("")`, was
 `_shrink_navbar`) — reading is sequential page turns and tapped links hit the
-resume gap above. Per-feed "Articles" stub pages are dropped from the
-spine/manifest by `_drop_feed_stub_pages`; their TOC entry is repointed to the
-feed's first article, which gets a small `eink-section` label instead (stubs
-carrying an inlined `hl` list, i.e. Inshorts, are kept). CSS: no forced
-`text-align` (device setting decides), `_clamp_large_sizes` caps font-size at
-1.25em and em bottom margins at 0.6em in place (marker `eink-base6`);
-`<pre>`/`<code>` become plain paragraphs. In `daily_digest`: opinion pages come
-first, newsletters last with short names (no `NL:`); newspaper articles keep
-only their lead image and are aborted below `MIN_ARTICLE_WORDS` (photo/caption
-items); newsletter issues over `SPLIT_MIN_WORDS` split into one chapter per
-story (`_split_stories`); a heading repeating the title is dropped. Published
+resume gap above. Each feed keeps one section page (`_simplify_feed_stub_pages`): it is what gives
+the table of contents its section rows, because CrossInk names a spine file
+after the FIRST toc entry pointing at it (`BookMetadataCache` spineToTocIndex),
+so a section row needs a page of its own — repointing the section at its first
+article (or dropping the stub) made that article show the section name, or no
+section row at all. calibre's tappable headline list is rebuilt as the section
+name plus a plain-text headline list (no links; stubs carrying an inlined `hl`
+list, i.e. Inshorts, are left alone). `_ensure_leading_toc_entry` gives the
+cover/masthead page a toc entry (else the footer says "Unnamed"). All article
+images are kept; `daily_digest` only aborts photo-only items under
+`MIN_ARTICLE_WORDS`. CSS: `text-align:left` is in the base rules but CrossInk's
+reader setting "Paragraph alignment" (default Justified) overrides book CSS
+unless set to "Book's Style"; `_clamp_large_sizes` caps font-size at 1.25em and
+em bottom margins at 0.6em in place ; `<pre>`/`<code>`
+become plain paragraphs. IE article headers carry `x-title` (1.45em) / `x-summary` (0.65em: font sizes
+land on whole points, 0.85em/0.75em of 14pt look like body text; CrossInk
+ignores italic, margin-left and text-align on it), and photo captions are
+rebuilt as `p.x-cap` (a bare caption `<span>` renders LARGER than body text)
+(calibre's generated copies of those rules are removed; marker `eink-base9`). Titles are
+`<Name> - DD-MM-YYYY`; CrossInk saves a catalogue download as `<title>.epub`
+when the OPDS entry has no `<author>` and its file browser sorts names
+ascending/number-aware, so OPDS entry titles lead with the
+`_countdown` number and carry no author. In `daily_digest`: opinion pages come
+first, newsletters last with short names (no `NL:`); newsletter issues over
+`SPLIT_MIN_WORDS` split into one chapter per story (`_split_stories`); a heading repeating the title is dropped. Published
 books are named `<366-day-of-year>-<date>-<slug>.epub` (`_generate.book_stem`)
 so the newest sorts first in a per-year folder.
 

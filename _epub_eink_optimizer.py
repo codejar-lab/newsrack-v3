@@ -52,7 +52,8 @@ import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from html import escape as _xml_escape, unescape as _xml_unescape
+from html import escape as _xml_escape
+from html import unescape as html_unescape
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import unquote
@@ -136,7 +137,7 @@ _CSS_DEAD_PROPS = (
 )
 
 # marker so the CSS pass is idempotent across re-runs / multiple stylesheets
-_CSS_BASE_MARKER = "/*eink-base6*/"
+_CSS_BASE_MARKER = "/*eink-base9*/"
 _CSS_EINK_BASE = (
     _CSS_BASE_MARKER
     + "html,body{background:#fff !important;color:#000 !important;}"
@@ -155,10 +156,25 @@ _CSS_EINK_BASE = (
     + "margin-bottom:0.3em !important;}"
     + "h1{font-size:1.3em !important;}h2{font-size:1.15em !important;}"
     + "h3{font-size:1.05em !important;}"
-    # body text: alignment is left to the reader's own setting (no forced
-    # text-align), one small gap between paragraphs, no stacked margins
+    # body text: left-aligned (justified lines open big word gaps -- seen on
+    # CrossInk 1.6.1 in the simulator), one small gap between paragraphs, no
+    # stacked margins
+    + "p,li,blockquote{text-align:left !important;}"
     + "p{margin-top:0 !important;margin-bottom:0.4em !important;}"
     + ".caption,.cap,#img-cap{text-align:center !important;}"
+    # newspaper article header (daily_digest marks these): a headline a step
+    # above body headings, and a smaller, plain-weight summary under it
+    + ".x-title{font-size:1.45em !important;font-weight:bold !important;"
+    + "line-height:1.2 !important;margin-bottom:0.4em !important;}"
+    # (font sizes land on whole points: 0.75em of 14pt still looks nearly like body text
+    # on CrossInk; 0.65em (9pt) is clearly smaller. CrossInk ignores
+    # italic, margin-left and text-align here, so size is the only lever.)
+    + ".x-summary{font-size:0.65em !important;font-weight:normal !important;"
+    + "margin-bottom:0.6em !important;}"
+    # photo captions: a bare <span> next to the image renders LARGER than body
+    # text on CrossInk, so they are rebuilt as <p class="x-cap">
+    + ".x-cap{font-size:0.65em !important;text-align:center !important;"
+    + "margin-bottom:0.6em !important;}"
     # inline small/legacy <font> sizing makes some feeds (word-of-the-day
     # blurbs) hard to read -- keep body-size text at body size
     + "small,font{font-size:1em !important;}"
@@ -672,6 +688,9 @@ def _clamp_large_sizes(css: str) -> str:
     return _MARGIN_BOTTOM_EM_RE.sub(margin, css)
 
 
+_OWN_CLASS_RULE_RE = re.compile(r"\.x-(?:title|summary|cap)\{[^{}]*\}")
+
+
 def _strip_css(csss: List[Path]) -> None:
     for css in csss:
         content = _read_text(css)
@@ -684,6 +703,10 @@ def _strip_css(csss: List[Path]) -> None:
         content = _clamp_small_font_sizes(content)
         content = _normalize_margins(content)
         content = _clamp_large_sizes(content)
+        # calibre emits its own rule for any class the recipe set (and the
+        # clamp above caps it); the e-ink base rules for these must be the
+        # only ones, so drop calibre's copies
+        content = _OWN_CLASS_RULE_RE.sub("", content)
         content = content + "\n" + _CSS_EINK_BASE
         css.write_text(content, encoding="utf-8")
 
@@ -1014,92 +1037,113 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  per-feed "Articles" stub pages                                              #
+#  per-feed section pages                                                      #
 # --------------------------------------------------------------------------- #
-_SUMMARY_HREF_RE = re.compile(
-    r'<a\b[^>]*\bclass="[^"]*\bsummary_headline\b[^"]*"[^>]*\bhref="([^"#]+)'
-    r'|<a\b[^>]*\bhref="([^"#]+)"[^>]*\bclass="[^"]*\bsummary_headline\b',
-    re.IGNORECASE,
-)
-_BODY_OPEN_RE = re.compile(r"(<body\b[^>]*>)", re.IGNORECASE)
-_NCX_POINT_RE = re.compile(
-    r"<navPoint\b[^>]*>\s*<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*"
-    r'<content\s+src="([^"]+)"',
+_NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
+_HEADLINE_RE = re.compile(
+    r'<a\b[^>]*\bclass="[^"]*\bsummary_headline\b[^"]*"[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
+_BODY_BLOCK_RE = re.compile(r"(<body\b[^>]*>).*?(</body>)", re.IGNORECASE | re.DOTALL)
 
 
-def _drop_feed_stub_pages(htmls: List[Path], opfs: List[Path],
-                          ncxs: List[Path]) -> None:
-    """calibre gives every feed a stub page listing its articles: one extra
-    page per section (18 in a Daily Digest) that the device's own TOC already
-    covers. Drop each stub from the spine/manifest, point its TOC entry at the
-    feed's first article, and put the section name as a small label at the top
-    of that article instead. Stubs that carry an inlined headline list
-    (_inline_single_article_summary, e.g. Inshorts) are real content and kept."""
-    stubs: Dict[Path, Path] = {}
+def _ensure_leading_toc_entry(opf: Path, ncx: Path) -> None:
+    """The cover (titlepage) and the masthead/date page have no table-of-contents
+    entry, which CrossInk shows as "Unnamed" in the footer. Add one entry, named
+    after the book, for the first spine file."""
+    import xml.etree.ElementTree as ET
+
+    opf_text, ncx_text = _read_text(opf), _read_text(ncx)
+    if not opf_text or not ncx_text:
+        return
+    title = re.search(r"<dc:title[^>]*>([^<]*)</dc:title>", opf_text)
+    first = re.search(r'<itemref\b[^>]*\bidref="([^"]+)"', opf_text)
+    if not title or not first:
+        return
+    href = None
+    for tag in re.findall(r"<item\b[^>]*>", opf_text):
+        if re.search(r'\bid="%s"' % re.escape(first.group(1)), tag):
+            m = re.search(r'\bhref="([^"]+)"', tag)
+            href = m.group(1) if m else None
+    if not href:
+        return
+    ns = "http://www.daisy.org/z3986/2005/ncx/"
+    tag = "{%s}" % ns
+    ET.register_namespace("", ns)
+    try:
+        tree = ET.parse(ncx)
+    except Exception:
+        return
+    nav_map = tree.getroot().find(tag + "navMap")
+    if nav_map is None:
+        return
+    points = nav_map.findall(tag + "navPoint")
+    if points:
+        content = points[0].find(tag + "content")
+        if content is not None and content.get("src", "").split("#")[0] == href:
+            return
+    point = ET.Element(tag + "navPoint", {"id": "num_0", "class": "chapter"})
+    label = ET.SubElement(point, tag + "navLabel")
+    ET.SubElement(label, tag + "text").text = html_unescape(title.group(1))
+    ET.SubElement(point, tag + "content", {"src": href})
+    nav_map.insert(0, point)
+    for order, p in enumerate(tree.getroot().iter(tag + "navPoint"), 1):
+        p.set("playOrder", str(order))
+    tree.write(ncx, encoding="utf-8", xml_declaration=True)
+
+
+def _section_labels(ncxs: List[Path]) -> Dict[Path, str]:
+    """navPoint label for every file a section entry points at."""
+    import xml.etree.ElementTree as ET
+
+    tag = "{%s}" % _NCX_NS
+    labels: Dict[Path, str] = {}
+    for ncx in ncxs:
+        try:
+            root = ET.parse(ncx).getroot()
+        except Exception:
+            continue
+        for point in root.iter(tag + "navPoint"):
+            content = point.find(tag + "content")
+            text = point.find(tag + "navLabel/" + tag + "text")
+            if content is None or text is None or not text.text:
+                continue
+            src = content.get("src", "").split("#", 1)[0]
+            labels.setdefault((ncx.parent / src).resolve(),
+                              re.sub(r"\s+", " ", text.text).strip())
+    return labels
+
+
+def _simplify_feed_stub_pages(htmls: List[Path], ncxs: List[Path]) -> None:
+    """Each feed keeps one section page -- it is what gives the table of
+    contents its section rows (CrossInk names a spine file after the FIRST toc
+    entry pointing at it, so a section row needs a page of its own). calibre's
+    version is a list of *tappable* headline links; rebuild it as the section
+    name plus a plain-text headline list, so the page works as an at-a-glance
+    index and carries no link into the book (tapped links don't persist the
+    reading position across sleep, see AGENTS.md). Stubs that carry an
+    inlined headline list (Inshorts) are real content and left alone."""
+    labels = _section_labels(ncxs)
     for path in htmls:
         content = _read_text(path)
         if (content is None or not _ARTICLE_SUMMARY_OPEN_RE.search(content)
                 or _HL_LIST_RE.search(content)):
             continue
-        m = _SUMMARY_HREF_RE.search(content)
-        if m:
-            stubs[path.resolve()] = (path.parent / (m.group(1) or m.group(2))).resolve()
-    if not stubs:
-        return
-
-    labels: Dict[Path, str] = {}
-    for ncx in ncxs:
-        text = _read_text(ncx)
-        if text is None:
+        headlines = [
+            re.sub(r"\s+", " ", html_unescape(re.sub(r"<[^>]+>", "", h))).strip()
+            for h in _HEADLINE_RE.findall(content)
+        ]
+        headlines = [h for h in headlines if h]
+        label = labels.get(path.resolve())
+        if not label or not headlines:
             continue
-        for label, src in _NCX_POINT_RE.findall(text):
-            target = (ncx.parent / src.split("#", 1)[0]).resolve()
-            if target in stubs:
-                labels[target] = re.sub(r"\s+", " ", label).strip()
-
-        def repoint(m: "re.Match") -> str:
-            src = m.group(1)
-            target = (ncx.parent / src.split("#", 1)[0]).resolve()
-            if target not in stubs:
-                return m.group(0)
-            return 'src="%s"' % os.path.relpath(stubs[target], ncx.parent.resolve())
-        new = re.sub(r'src="([^"]+)"', repoint, text)
-        if new != text:
-            ncx.write_text(new, encoding="utf-8")
-
-    for opf in opfs:
-        text = _read_text(opf)
-        if text is None:
-            continue
-        ids = []
-        for m in re.finditer(r"<item\b[^>]*>", text):
-            tag = m.group(0)
-            href = re.search(r'\bhref="([^"]+)"', tag)
-            iid = re.search(r'\bid="([^"]+)"', tag)
-            if href and iid and (opf.parent / href.group(1)).resolve() in stubs:
-                ids.append(iid.group(1))
-                text = text.replace(tag, "")
-        for iid in ids:
-            text = re.sub(r'<itemref\b[^>]*\bidref="%s"[^>]*/>\s*' % re.escape(iid),
-                          "", text)
-        opf.write_text(text, encoding="utf-8")
-
-    for stub, first in stubs.items():
-        label = labels.get(stub)
-        if label:
-            content = _read_text(first)
-            if content is not None:
-                tag = ('<p class="eink-section" style="font-size:85%%;'
-                       'font-weight:bold;margin:0 0 0.3em;color:#444">%s</p>'
-                       % _xml_escape(_xml_unescape(label).upper()))
-                content = _BODY_OPEN_RE.sub(lambda m: m.group(1) + tag, content, 1)
-                first.write_text(content, encoding="utf-8")
-        try:
-            stub.unlink()
-        except OSError:
-            pass
+        body = "<h2>%s</h2><ul>%s</ul>" % (
+            _xml_escape(label),
+            "".join("<li>%s</li>" % _xml_escape(h) for h in headlines),
+        )
+        new = _BODY_BLOCK_RE.sub(lambda m: m.group(1) + body + m.group(2), content, 1)
+        if new != content:
+            path.write_text(new, encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -1166,8 +1210,9 @@ def optimize_epub_for_eink(
             _strip_css(b["css"])
         _clean_html_files(b["html"], opts)
         ncx = [p for p in b["other"] if p.suffix.lower() == ".ncx"]
-        _drop_feed_stub_pages(b["html"], b["opf"], ncx)
-        b["html"] = [p for p in b["html"] if p.exists()]
+        _simplify_feed_stub_pages(b["html"], ncx)
+        if b["opf"] and ncx:
+            _ensure_leading_toc_entry(b["opf"][0], ncx[0])
         if renames:
             _rewrite_image_refs(
                 b["opf"] + b["html"] + b["css"] + ncx, renames)

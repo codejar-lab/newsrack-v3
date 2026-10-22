@@ -633,11 +633,12 @@ def chromium_get(storage, url, timeout=45):
 
 
 class DailyDigestBase(BasicNewsRecipe):
-    # year-first date: CrossInk's Library "Title" sort compares the folded
-    # title byte-wise, so only YYYY-MM-DD orders the issues chronologically
-    title = _name + ' - ' + datetime.now().strftime('%Y-%m-%d')
+    # DD-MM-YYYY, no dots (CrossInk's file-name sanitiser reads ".26" as an
+    # extension). Newest-first order in the device's file browser comes from
+    # the catalogue title's day countdown prefix (_generate._countdown).
+    title = _name + ' - ' + datetime.now().strftime('%d-%m-%Y')
     # calibre appends this to the title on conversion; empty => the shipped book
-    # is just "Daily Digest - YYYY-MM-DD" with no trailing " [Weekday, dd Mon YYYY]"
+    # is just "Daily Digest - DD-MM-YYYY" with no trailing " [Weekday, dd Mon YYYY]"
     timefmt = ''
     __author__ = 'newsrack'
     description = (
@@ -659,7 +660,9 @@ class DailyDigestBase(BasicNewsRecipe):
     oldest_article = 1.15  # days (Live Mint RSS + Indian Express discovery)
     recursions = 0
     timeout = 20  # bound each fetch: a stalled network once made single images take 6 min each
-    masthead_url = 'https://www.thehindu.com/theme/images/th-online/thehindu-logo.svg'
+    # no masthead image: this was The Hindu's logo, wrong for a multi-paper
+    # digest. calibre then renders the book title as the masthead.
+    masthead_url = None
 
     # When True, blocked feeds/sections are first tried through calibre's
     # Chromium transport (see chromium_get) before the Google-News + Wayback /
@@ -1609,16 +1612,8 @@ class DailyDigestBase(BasicNewsRecipe):
         return soup
 
     def _news_reading_trim(self, soup):
-        '''Newspaper articles: keep only the lead image (on a 4-grey panel a
-        news photo is mostly a grey block that costs a page turn), and drop
-        photo-only "articles" (a picture plus its caption) entirely.'''
-        for img in soup.findAll('img')[1:]:
-            node = img
-            while (node.parent is not None
-                   and node.parent.name in ('picture', 'a', 'span', 'figure')
-                   and len(self._norm_txt(self.tag_to_string(node.parent))) < 400):
-                node = node.parent
-            node.extract()
+        '''Newspaper articles: drop photo-only "articles" (a picture plus its
+        caption) entirely. All real images are kept.'''
         body = soup.find('body') or soup
         # visible text only: Hindu pages still carry <script> JSON in the body
         # at this point, which made a captioned photo look like an article
@@ -1896,6 +1891,15 @@ class DailyDigestBase(BasicNewsRecipe):
         for x in soup.findAll(['input', 'select', 'textarea']):
             x.extract()
 
+        # article header: headline a step bigger, summary small and plain
+        # (styled by the optimizer's .x-title / .x-summary rules)
+        head = soup.find('h1')
+        if head is not None:
+            head['class'] = 'x-title'
+        for summ in soup.findAll(attrs={'class': lambda c: c and 'top-description' in c}):
+            summ.name = 'p'
+            summ['class'] = 'x-summary'
+
         # the "Opinion"/"Explained" kicker printed inside the headline itself
         for h in soup.findAll(['h1', 'h2']):
             first = h.find('span')
@@ -1923,6 +1927,23 @@ class DailyDigestBase(BasicNewsRecipe):
             t.extract()
 
         kept_imgs = self._ie_images(soup, wb_ts)
+        # IE puts the photo and its caption in one <span><img/><span>caption
+        # </span></span>; the bare caption span renders larger than body text
+        # on CrossInk, so make it a small centred <p>
+        for img in soup.findAll('img'):
+            wrap = img.parent
+            if wrap is None or wrap.name != 'span':
+                continue
+            cap = img.find_next_sibling('span')
+            if cap is None or cap.parent is not wrap:
+                continue
+            text = self._norm_txt(self.tag_to_string(cap))
+            cap.extract()
+            if text:
+                p = soup.new_tag('p')
+                p['class'] = 'x-cap'
+                p.string = text
+                wrap.insert_after(p)
         if not kept_imgs and lead_img:
             s = lead_img
             if s.startswith('//'):
@@ -1966,7 +1987,15 @@ class DailyDigestBase(BasicNewsRecipe):
                     or s.endswith('-button-300-ie.jpeg')
                     or any(k in low for k in ('subscri', 'promo', '/adsystem/',
                                               'logo'))):
-                img.extract()
+                # IE wraps the photo and its caption in one <span>: drop the
+                # caption with the picture, or it is left behind as a stray
+                # paragraph
+                wrap = img.parent
+                if (wrap is not None and wrap.name == 'span'
+                        and len(wrap.findAll('img')) == 1):
+                    wrap.extract()
+                else:
+                    img.extract()
                 continue
             if s.startswith('//'):
                 s = 'https:' + s
