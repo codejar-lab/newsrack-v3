@@ -172,7 +172,9 @@ _CSS_EINK_BASE = (
     + ".x-summary{font-size:0.65em !important;font-weight:normal !important;"
     + "margin-bottom:0.6em !important;}"
     # photo captions: a bare <span> next to the image renders LARGER than body
-    # text on CrossInk, so they are rebuilt as <p class="x-cap">
+    # text on CrossInk, so they are rebuilt as <p id="xcap-N"> (class added by
+    # _mark_header_classes, never by the recipe: calibre merges classes of
+    # identically-styled elements, which spread x-summary over every paragraph)
     + ".x-cap{font-size:0.65em !important;text-align:center !important;"
     + "margin-bottom:0.6em !important;}"
     # inline small/legacy <font> sizing makes some feeds (word-of-the-day
@@ -768,6 +770,25 @@ _JUNK_ATTR_RE = re.compile(
 )
 
 
+# article-header elements are identified by id (stable through calibre) and get
+# their class only now, after calibre's CSS flattening is over
+_HEADER_ID_RE = re.compile(
+    r'<(h1|h4|p)\b((?:[^>"]|"[^"]*")*?\bid="(translation-title-|translation-excerpt-|xcap-)'
+    r'[^"]*"(?:[^>"]|"[^"]*")*)>',
+    re.IGNORECASE,
+)
+_HEADER_CLASS = {"translation-title-": "x-title",
+                 "translation-excerpt-": "x-summary",
+                 "xcap-": "x-cap"}
+
+
+def _mark_header_classes(html: str) -> str:
+    def repl(m: "re.Match") -> str:
+        attrs = re.sub(r'\sclass="[^"]*"', "", m.group(2))
+        return '<%s class="%s"%s>' % (m.group(1), _HEADER_CLASS[m.group(3)], attrs)
+    return _HEADER_ID_RE.sub(repl, html)
+
+
 def _strip_junk_attrs(html: str) -> str:
     return _OPEN_TAG_RE.sub(lambda m: _JUNK_ATTR_RE.sub("", m.group(0)), html)
 
@@ -1029,6 +1050,7 @@ def _clean_html_files(htmls: List[Path], opts: EinkOptions) -> None:
             # divider <hr/>, if any) out here so it doesn't also render at
             # the top of the chapter itself.
             new = _HL_LIST_STRIP_RE.sub("", new)
+        new = _mark_header_classes(new)
         new = _strip_junk_attrs(new)
         if _LIGATURE_RE.search(new):
             new = _LIGATURE_RE.sub(lambda m: _LIGATURES[m.group(0)], new)

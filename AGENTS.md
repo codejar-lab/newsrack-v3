@@ -274,6 +274,30 @@ books are named `<366-day-of-year>-<date>-<slug>.epub` (`_generate.book_stem`)
 so the newest sorts first in a per-year folder.
 
 
+**Update (2026-10-22): content-cleaning pass from a per-feed review.** Gotcha
+first: **never give an element a class in the recipe that has no CSS rule at
+calibre time** — calibre's CSS flattening reuses an original class name for
+every identically-styled element, so `class="x-summary"` landed on nearly every
+paragraph in the book (and its 0.65em rule would have shrunk all text). Header
+elements are marked by stable `id` (`translation-title-*`, `translation-excerpt-*`,
+`xcap-N`) and `_mark_header_classes` adds `x-title`/`x-summary`/`x-cap` in the
+optimizer, after calibre. Cleaning added to `daily_digest.py`: `_scrub_text`
+(zero-width chars incl. in `alt`, `(NYT $)` tags, `(Chart 1)`, footnote `*`,
+literal backslash-n, `word.Next` joins, WOTD `//` and backslash pronunciation,
+"views are personal"; external links are unwrapped first because
+`(<a>Reuters</a> $)` splits the text), `_strip_cta_blocks` (sponsor block ending
+in a lone "Get the Report"), `_cut_tails` (legal/SEBI footers, "Related stories",
+sign-offs end the article), `_drop_echoes` (standfirst repeated in body/caption),
+`_strip_bylines_and_bios`, `_unwrap_tweets`, `_strip_edition_intro` (Daily Brief
+"In today's edition..."), Devanagari-only paragraphs dropped, Hindu "fifty years
+ago" archive wire items aborted, brand suffix stripped from newsletter titles,
+and the Daily Brief's "Beyond Today's Brief" promo chapter dropped (heading text
+carries `&#8217;`, so unescape before matching). Images are NOT dropped (explicit
+requirement). Known gaps: a mid-article teaser+image that is not repeated in a
+Related block; quiz answers that sit in their own tags; Letters subject lines
+are unstyled.
+
+**Also as of 2026-09-15: `daily_digest`'s newsletter articles no longer
 repeat across consecutive daily builds.** `NEWSLETTER_MAX_AGE_DAYS`
 (1.15 days) is wider than the ~1 day between builds, so an entry posted
 late in one day's window could still look "fresh" the next day too — the

@@ -186,9 +186,25 @@ def _split_stories(body, title):
     out = [(title, body[:cuts[0]])]
     for i, h in enumerate(heads[1:]):
         end = cuts[i + 1] if i + 1 < len(cuts) else len(body)
-        htitle = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', h.group(1))).strip()
+        import html as _html
+        htitle = _html.unescape(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', h.group(1)))).strip()
         out.append((htitle or title, body[h.start():end]))
     return out
+
+
+def _echo_norm(text):
+    return re.sub(r'[^a-z0-9]+', '', (text or '').lower())
+
+
+def _is_echo(text, ref):
+    '''True if `text` (normalised) is, or nearly is, the reference sentence.'''
+    a, b = _echo_norm(text), _echo_norm(ref)
+    if len(a) < 40 or len(b) < 40:
+        return False
+    if a == b or (a in b and len(a) / len(b) > 0.7) or (b in a and len(b) / len(a) > 0.7):
+        return True
+    import difflib
+    return difflib.SequenceMatcher(None, a[:400], b[:400]).ratio() >= 0.88
 
 
 def _seen_urls_path(recipe_cls_name):
@@ -317,6 +333,20 @@ _NL_PROMO_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
     r'thank you for reading\.? do share',
     r'how did you like (?:today|this)',
     r'^our goal with the daily brief', r'you can listen to the podcast',
+    # share / subscribe / feedback tails
+    r'feel free to share it with', r'^if you liked this story',
+    r'annual survey', r"you.re reading this on the app, you can just go ahead",
+    r'^did you like this edition', r'leave a feedback',
+    r'^until then\.\.\.',
+    r'subscribe now to read it in full', r'sign up to receive it in your inbox',
+    r'subscribers can now watch', r'want to join the next conversation',
+    r'^\(?got any ideas\? drop me a line',
+    r'^want more tidbits', r'^- this edition of the newsletter was written by',
+    r'^early birds:', r'^see the entry\s*>',
+    # sponsor / consultation CTAs
+    r'book a free \d+-minute consultation', r'no spam, no pressure',
+    # legal / SEBI footers
+    r'^sebi reg(?:istration)?', r'^sebi registration details',
     r'^just a quick heads-up before we dive in',
     r'rate (?:today|this) (?:edition|newsletter)',
     r"that.s it from us", r'send us your book',
@@ -332,11 +362,40 @@ _NL_PROMO_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
 # A feed body that is only a paywall teaser (Ghost "subscribers only" posts):
 # the full text is not obtainable, so the entry is dropped, not shipped as a
 # page of nav links and a Subscribe button.
+_ZW_RE = re.compile('[\u200b\u2060\ufeff\u00ad]|(?<=[A-Za-z0-9 ,.])[\u200c\u200d](?=[A-Za-z0-9 ,.])')
+_TEXT_FIXES = (
+    (re.compile(r'\s*\((?:[A-Za-z][A-Za-z .]{1,28})\s?\$\)'), ''),        # (NYT $) paywall tags
+    (re.compile(r'\s*\((?:Chart|Table|Figure|Graphic)s? \d+\)'), ''),     # (Chart 1) with no chart
+    (re.compile(r'(?<=[.!?\u201d"\u2019)])\*+(?=\s|$)'), ''),               # footnote asterisks
+    (re.compile(r'(?<=[a-z]{3}[.!?])(?=[A-Z][a-z]{2})'), ' '),           # "word.Next" -> "word. Next"
+    (re.compile(r'\\n(?=[A-Za-z])'), ' '),                              # literal backslash-n
+    (re.compile(r'^\s*//\s*'), ''),                                      # WOTD example marker
+    (re.compile(r'\\([^\\\s][^\\]{1,30})\\'), r'/\1/'),                # \voh-KAY-shun\ pronunciation
+    (re.compile(r'\s*\(?(?:The )?views (?:expressed )?(?:here )?are personal\.?\)?\s*$', re.I), ''),
+)
+_DEVANAGARI_RE = re.compile('[\u0900-\u097f]')
+_EMAIL_RE = re.compile(r'\S+@\S+\.\S+')
 _PAYWALL_RE = re.compile(
     r'this post is for (?:paid )?subscribers|'
     r'(?:become|upgrade to) a (?:paid )?(?:member|subscriber) to (?:read|continue)|'
     r'subscribe to (?:continue reading|read the (?:full|rest))',
     re.IGNORECASE)
+# Sponsor-ish blocks that open with a heading and run to the next heading/<hr>.
+_NL_AD_MARKERS += ('how strong is your financial plan', 'podcast', 'show notes',
+                   'roundtables', "beyond today's brief", 'beyond today\u2019s brief')
+# A short paragraph that is only a call to action: the sponsor block it closes
+# (heading + image + blurb) is removed with it.
+_CTA_RE = re.compile(
+    r'^(?:get (?:the )?(?:report|free [\w ]{3,30}|started(?: free)?)|learn more|'
+    r'download (?:the )?[\w ]{3,30}|book a [\w -]{3,30}|read (?:the )?report)\W*$',
+    re.IGNORECASE)
+# A block starting with one of these ends the article: it and everything after
+# it (legal footers, sign-offs) is cut.
+_CUT_TAIL_RES = tuple(re.compile(p, re.IGNORECASE) for p in (
+    r'^the information presented in this post', r'^did you like this edition',
+    r'^if you liked this story', r'^related stories?$', r'^related topics?$',
+    r'^this story is from',
+))
 # Section headings after which everything (to the next <hr>/heading) is a footer.
 _NL_FOOTER_HEADINGS = (
     'the team', 'written by', 'about the author', 'about us', 'credits',
@@ -998,6 +1057,11 @@ class DailyDigestBase(BasicNewsRecipe):
 
             arts = []
             for e in fresh:
+                # "... & more - Groww Digest": the section already names the source
+                short = re.sub(r'\s*\(.*\)$', '', name)
+                e['title'] = re.sub(
+                    r'\s*[-\u2013|]\s*%s\s*$' % re.escape(short), '',
+                    e['title'], flags=re.I) or e['title']
                 art = {'title': e['title'], 'url': e['url'],
                        'description': e['description']}
                 if e['date_str']:
@@ -1020,7 +1084,8 @@ class DailyDigestBase(BasicNewsRecipe):
                     continue
                 extra = []  # further stories split off this issue
                 if has_body:
-                    parts = _split_stories(body, e['title'])
+                    parts = [x for x in _split_stories(body, e['title'])
+                             if not re.match(r"beyond today\W?s\W+brief", x[0], re.I)]
                     for n, (ptitle, pbody) in enumerate(parts):
                         part = art if n == 0 else dict(art, title=ptitle,
                                                        url='%s#story-%d' % (e['url'], n))
@@ -1033,8 +1098,9 @@ class DailyDigestBase(BasicNewsRecipe):
                             self._set_domain(part['url'], 'newsletter')
                             extra.append(part)
                     if len(parts) > 1:
-                        self.log('Newsletter %s: split into %d stories'
-                                 % (name, len(parts)))
+                        self.log('Newsletter %s: split into %d stories: %s'
+                                 % (name, len(parts),
+                                    ' | '.join(x[0][:30] for x in parts)))
                 # A Hindu link with no feed body is downloaded as the bare
                 # article page, site header, menus and footer included. Route
                 # it through _clean_hindu (which trims to the article body)
@@ -1605,6 +1671,8 @@ class DailyDigestBase(BasicNewsRecipe):
 
         if dom in NEWS_DOMAINS:
             self._news_reading_trim(soup)
+        self._drop_non_latin_paragraphs(soup)
+        self._scrub_text(soup)
 
         for attr in self.remove_attributes:
             for x in soup.findAll(attrs={attr: True}):
@@ -1614,6 +1682,8 @@ class DailyDigestBase(BasicNewsRecipe):
     def _news_reading_trim(self, soup):
         '''Newspaper articles: drop photo-only "articles" (a picture plus its
         caption) entirely. All real images are kept.'''
+        self._strip_bylines_and_bios(soup)
+        self._drop_echoes(soup)
         body = soup.find('body') or soup
         # visible text only: Hindu pages still carry <script> JSON in the body
         # at this point, which made a captioned photo look like an article
@@ -1622,11 +1692,213 @@ class DailyDigestBase(BasicNewsRecipe):
                     and t.parent.name not in ('script', 'style', 'noscript', 'title'))
         if words < MIN_ARTICLE_WORDS:
             self.abort_article('only %d words (photo/caption item)' % words)
+        # "Fifty years ago" archive wire items: "Tokyo, October 21: ..." with no year
+        first = ' '.join(self._norm_txt(self.tag_to_string(body)).split()[:60])
+        if words < 250 and re.search(r'\b[A-Z][a-z]+, [A-Z][a-z]+ \d{1,2}:', first) \
+                and not re.search(r'\b(19|20)\d\d\b', first):
+            self.abort_article('archive wire snippet')
 
     # --- per-source cleaners --------------------------------------------- #
     @staticmethod
     def _norm_txt(s):
         return re.sub(r'\s+', ' ', (s or '')).strip()
+
+    # --- shared cleaning helpers (reviewer findings, 2026-10-22) ---------------- #
+    @staticmethod
+    def _cut_from(el):
+        '''Remove `el` and everything after it in document order.'''
+        node = el
+        while node is not None and getattr(node, 'name', None) not in ('body', '[document]'):
+            for sib in list(node.find_next_siblings()):
+                sib.extract()
+            node = node.parent
+        el.extract()
+
+    def _scrub_text(self, soup):
+        '''Invisible characters, paywall tags, dangling "(Chart 1)", footnote
+        asterisks, literal \\n, "word.Next" joins, WOTD // and \\pron\\ marks.'''
+        for node in soup.findAll(string=True):
+            if node.parent is not None and node.parent.name in ('script', 'style'):
+                continue
+            old = str(node)
+            new = _ZW_RE.sub('', old)
+            for rx, repl in _TEXT_FIXES:
+                new = rx.sub(repl, new)
+            if new != old:
+                node.replace_with(new)
+        for el in soup.findAll(attrs={'alt': True}):
+            el['alt'] = _ZW_RE.sub('', el['alt'])
+        # a lone "$" paywall mark or "*" footnote mark in its own inline tag
+        # (<em>$</em>, <sup>*</sup>) hides from the text rules above
+        for el in list(soup.findAll(['em', 'i', 'span', 'sup', 'strong', 'b', 'small', 'a'])):
+            t = self._norm_txt(self.tag_to_string(el))
+            if t in ('*', '**'):
+                el.extract()
+            elif t == '$' and el.parent is not None:
+                el.replace_with('$')
+        # "(<a>Reuters</a> $)": links are dead on an offline reader and split the
+        # text the rules above need to see whole -- unwrap external ones
+        for a in list(soup.findAll('a', href=True)):
+            if a['href'].startswith(('http://', 'https://')):
+                a.unwrap()
+        for parent in soup.findAll(['p', 'li', 'div']):
+            if hasattr(parent, 'smooth'):
+                parent.smooth()
+        for node in soup.findAll(string=True):
+            if node.parent is None or node.parent.name in ('script', 'style'):
+                continue
+            old = str(node)
+            new = old
+            for rx, repl in _TEXT_FIXES[:3]:
+                new = rx.sub(repl, new)
+            if new != old:
+                node.replace_with(new)
+
+    def _strip_cta_blocks(self, soup):
+        '''A sponsor block ends in a lone call-to-action ("Get the Report",
+        "Learn more"): drop the CTA with the heading/image/blurb above it.'''
+        blocks = ('p', 'div', 'section', 'li')
+        for el in list(soup.findAll(blocks)):
+            if el.parent is None or el.find(blocks):
+                continue
+            if not _CTA_RE.match(self._norm_txt(self.tag_to_string(el))):
+                continue
+            run, node, size = [el], el, 0
+            while node.previous_sibling is not None and len(run) < 7:
+                node = node.previous_sibling
+                if getattr(node, 'name', None) is None:
+                    continue
+                size += len(self._norm_txt(self.tag_to_string(node)))
+                run.append(node)
+                if node.name in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr'):
+                    break
+            if (run[-1].name in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6') and size < 900):
+                for r in run:
+                    r.extract()
+            else:
+                el.extract()  # at least drop the dangling CTA itself
+
+    def _cut_tails(self, soup):
+        '''Legal footers, sign-offs and "Related stories" lists end the article.'''
+        blocks = ('p', 'div', 'section', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                  'strong', 'b')
+        for el in list(soup.findAll(blocks)):
+            if el.parent is None or el.find(blocks[:5]):
+                continue
+            txt = self._norm_txt(self.tag_to_string(el))
+            if txt and any(r.search(txt[:120]) for r in _CUT_TAIL_RES):
+                self._drop_teasers_of_related(soup, el)
+                self._cut_from(el)
+                return
+
+    def _drop_teasers_of_related(self, soup, marker):
+        '''Mid-article teasers (a headline + image) whose text also appears in
+        the trailing "Related stories" block are removed together.'''
+        if not re.match(r'related', self._norm_txt(self.tag_to_string(marker)), re.I):
+            return
+        heads = set()
+        for sib in [marker] + list(marker.find_next_siblings()):
+            for el in getattr(sib, 'findAll', lambda *a, **k: [])(['p', 'h1', 'h2', 'h3', 'h4', 'a', 'li']):
+                t = _echo_norm(self.tag_to_string(el))
+                if len(t) > 15:
+                    heads.add(t)
+        for el in list(soup.findAll(['p', 'h2', 'h3', 'h4', 'div'])):
+            if el.parent is None or el.find(['p', 'div', 'h2', 'h3']):
+                continue
+            if el in list(marker.next_elements):
+                continue
+            t = _echo_norm(self.tag_to_string(el))
+            if t in heads:
+                nxt = el.find_next_sibling()
+                if nxt is not None and nxt.find('img') and not self._norm_txt(self.tag_to_string(nxt)):
+                    nxt.extract()
+                el.extract()
+
+    def _drop_non_latin_paragraphs(self, soup):
+        '''Devanagari-only paragraphs: the reader's fonts cannot show them.'''
+        for el in list(soup.findAll(['p', 'div', 'li'])):
+            if el.parent is None or el.find(['p', 'div', 'li']):
+                continue
+            txt = self._norm_txt(self.tag_to_string(el))
+            letters = [c for c in txt if c.isalpha()]
+            if len(letters) > 20 and sum(1 for c in letters if _DEVANAGARI_RE.match(c)) > 0.6 * len(letters):
+                el.extract()
+
+    def _unwrap_tweets(self, soup, drop=False):
+        '''Embedded-tweet wrappers: Dot News wraps ordinary paragraphs in them
+        (render as plain blocks); elsewhere they are social posts (dropped).'''
+        for bq in list(soup.findAll('blockquote')):
+            cls = bq.get('class') or ''
+            if 'twitter-tweet' not in (cls if isinstance(cls, str) else ' '.join(cls)):
+                continue
+            if drop:
+                nxt = bq.find_next_sibling()
+                if nxt is not None and re.match(r'^[\u2014\u2013-]\s*\S', self._norm_txt(self.tag_to_string(nxt))):
+                    nxt.extract()
+                bq.extract()
+            else:
+                bq.name = 'div'
+                del bq['class']
+
+    def _drop_echoes(self, soup):
+        '''A paragraph or caption that repeats the standfirst, or a caption
+        that repeats a body paragraph, is a duplicate: drop it.'''
+        deck = None
+        for el in soup.findAll(['p', 'h4']):
+            ident = el.get('id') or ''
+            cls = el.get('class') or ''
+            cls = cls if isinstance(cls, str) else ' '.join(cls)
+            if ident.startswith('translation-excerpt-') or 'sub-title' in cls:
+                deck = self.tag_to_string(el)
+                deck_el = el
+                break
+        if deck:
+            for el in list(soup.findAll(['p', 'div', 'span', 'figcaption'])):
+                if el is deck_el or el.parent is None or el.find(['p', 'div']):
+                    continue
+                if _is_echo(self.tag_to_string(el), deck):
+                    el.extract()
+        # captions that repeat a body paragraph
+        paras = [self.tag_to_string(x) for x in soup.findAll('p') if (x.get('id') or '').startswith('translation-excerpt-') is False]
+        for cap in list(soup.findAll(attrs={'class': 'caption'})) + list(soup.findAll(attrs={'id': lambda i: i and i.startswith('xcap-')})):
+            ct = self.tag_to_string(cap)
+            if cap.parent is not None and any(_is_echo(ct, p_) for p_ in paras if p_ != ct):
+                cap.extract()
+
+    _DATELINE_RE = re.compile(
+        r'^[A-Z][A-Za-z .]{2,30}\s*\u00b7\s*(?:Updated:|[A-Z][a-z]{2} \d{1,2},)')
+
+    def _strip_bylines_and_bios(self, soup):
+        '''IE "Also by" / dateline / author-bio-with-email lines, and Hindu author
+        blocks sitting inside photo captions.'''
+        for el in list(soup.findAll(['p', 'div', 'span'])):
+            if el.parent is None or el.find(['p', 'div']):
+                continue
+            txt = self._norm_txt(self.tag_to_string(el))
+            if not txt:
+                continue
+            if (re.match(r'^Also by\b', txt) or self._DATELINE_RE.match(txt)
+                    or (_EMAIL_RE.search(txt) and len(txt) < 400)):
+                el.extract()
+        # Hindu: "Mahesh Sachdev / A retired ambassador ..." as a caption
+        for cap in list(soup.findAll(attrs={'class': 'caption'})):
+            txt = self._norm_txt(self.tag_to_string(cap))
+            if txt and len(txt.split()) <= 20 and not re.search(r'[.?!:]', txt):
+                cap.extract()
+
+    def _strip_edition_intro(self, soup):
+        '''"In today's edition of The Daily Brief: 1. ... 2. ..." table of
+        contents (each split chapter already carries its own headline).'''
+        for el in list(soup.findAll(['p', 'div'])):
+            if el.parent is None or el.find(['p', 'div']):
+                continue
+            if re.match(r"^In today.s edition of", self._norm_txt(self.tag_to_string(el))):
+                for sib in list(el.find_next_siblings()):
+                    if sib.name in ('h1', 'h2', 'h3', 'h4', 'hr'):
+                        break
+                    sib.extract()
+                el.extract()
+                return
 
     def _clean_newsletter(self, soup):
         for x in soup.findAll(attrs={'class': NL_JUNK}):
@@ -1654,6 +1926,10 @@ class DailyDigestBase(BasicNewsRecipe):
                 (img.find_parent(['figure', 'p']) or img).extract()
 
         self._strip_ad_blocks(soup)
+        self._strip_cta_blocks(soup)
+        self._cut_tails(soup)
+        self._strip_edition_intro(soup)
+        self._unwrap_tweets(soup)
         self._strip_hindu_chrome(soup)
 
         # calibre puts the article title on top as an <h2>; issues (and the
@@ -1770,6 +2046,20 @@ class DailyDigestBase(BasicNewsRecipe):
         for x in soup.findAll(attrs={'class': HINDU_JUNK}):
             x.extract()
         self._strip_hindu_chrome(soup)
+        self._cut_tails(soup)  # "Related stories" lists (Today's Cache)
+        for el in soup.findAll(['p', 'div']):
+            if el.parent is not None and re.match(r'^Early Birds:', self._norm_txt(self.tag_to_string(el))):
+                el.extract()
+        # quiz: each "Ans:" starts its own line
+        for t in list(soup.findAll(string=re.compile(r'\S\s+Ans:'))):
+            parts = re.split(r'\s+(?=Ans:)', str(t))
+            cur = soup.new_string(parts[0])
+            t.replace_with(cur)
+            for part in parts[1:]:
+                br = soup.new_tag('br')
+                cur.insert_after(br)
+                cur = soup.new_string(part)
+                br.insert_after(cur)
         for tag in soup.findAll(['source', 'button', 'svg']):
             tag.extract()
         # ad slots + the todays-paper photo-gallery / slideshow wrapper
@@ -1891,14 +2181,16 @@ class DailyDigestBase(BasicNewsRecipe):
         for x in soup.findAll(['input', 'select', 'textarea']):
             x.extract()
 
+        self._unwrap_tweets(soup, drop=True)
+
         # article header: headline a step bigger, summary small and plain
-        # (styled by the optimizer's .x-title / .x-summary rules)
-        head = soup.find('h1')
-        if head is not None:
-            head['class'] = 'x-title'
+        # (styled by the optimizer's .x-title / .x-summary rules, which it
+        # attaches by element id: a class set here would be merged by calibre's
+        # CSS flattening into every identically-styled paragraph, since no rule
+        # exists for it yet when calibre runs)
         for summ in soup.findAll(attrs={'class': lambda c: c and 'top-description' in c}):
             summ.name = 'p'
-            summ['class'] = 'x-summary'
+            del summ['class']
 
         # the "Opinion"/"Explained" kicker printed inside the headline itself
         for h in soup.findAll(['h1', 'h2']):
@@ -1941,7 +2233,8 @@ class DailyDigestBase(BasicNewsRecipe):
             cap.extract()
             if text:
                 p = soup.new_tag('p')
-                p['class'] = 'x-cap'
+                self._cap_seq = getattr(self, '_cap_seq', 0) + 1
+                p['id'] = 'xcap-%d' % self._cap_seq  # -> class x-cap (optimizer)
                 p.string = text
                 wrap.insert_after(p)
         if not kept_imgs and lead_img:
