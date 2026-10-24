@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack - Indian Newspapers</title>
+<updated>2026-10-24T06:01:19Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>069 Daily Digest - 24-10-2026</title>
+<summary>Daily Digest - 24-10-2026 published at 2026-10-24 12:31AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;When AI vies for literary glory&lt;/li&gt;&lt;li&gt;On climate, a long road back to Paris&lt;/li&gt;&lt;li&gt;Foreign hand bogey is wearing thin. Bury it&lt;/li&gt;&lt;li&gt;Ram Madhav: A downturn in India-US ties, but all is not lost&lt;/li&gt;&lt;li&gt;Building a giant cockroach — and burning it&lt;/li&gt;&lt;li&gt;From Emergency to Vijaydashami 2026: Why Mohan Bhagwat’s speech isn’t a U-turn&lt;/li&gt;&lt;li&gt;MLC elections today: Why not all Indian states have Legislative Councils, and what they do&lt;/li&gt;&lt;li&gt;As Europe sees protest wave, understanding the economics of social unrest&lt;/li&gt;&lt;li&gt;The long-running debate over Uttarakhand’s two capitals: Dehradun and Gairsain&lt;/li&gt;&lt;li&gt;Falling short&lt;/li&gt;&lt;li&gt;In the crossfire&lt;/li&gt;&lt;li&gt;BJP has no bad option, Congress has no good option&lt;/li&gt;&lt;li&gt;U.S. midterms — Republicans face growing Blue wave&lt;/li&gt;&lt;li&gt;Death in the time of Durga Puja&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;li&gt;An explainer on the eMudhra fiasco&lt;/li&gt;&lt;li&gt;Tonbo Imaging’s 65% listing gains, Dr Reddy’s profits down 31%, &amp; more&lt;/li&gt;&lt;li&gt;Closing The Loop&lt;/li&gt;&lt;li&gt;Your PEEK Into The Day: 5 Stories That Deserve The Front Page&lt;/li&gt;&lt;li&gt;Swiggy’s Q2: Net loss drops nearly 16%, revenue rises 36%; What sells? The celebrity or the product?&lt;/li&gt;&lt;li&gt;India’s AI boom runs through a strand of glass&lt;/li&gt;&lt;li&gt;Who really gains from India’s push for maize ethanol?&lt;/li&gt;&lt;li&gt;Tidbits:&lt;/li&gt;&lt;li&gt;Why India Froze Gold Funds&lt;/li&gt;&lt;li&gt;asunder&lt;/li&gt;&lt;li&gt;The Download: testing six tech promises and biotech’s blind spots&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-10-24T00:31:11Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/069-2026-10-24-india-opinion.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/069-2026-10-24-india-opinion.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/069-2026-10-24-india-opinion.epub"/>
+</entry>
+</feed>
