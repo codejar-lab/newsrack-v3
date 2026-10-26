@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack - Indian Newspapers</title>
+<updated>2026-10-26T06:01:03Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>067 Daily Digest - 26-10-2026</title>
+<summary>Daily Digest - 26-10-2026 published at 2026-10-26 12:30AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;From the Opinions Editor: In season of protests, on the costs of speaking out, consequences of silence&lt;/li&gt;&lt;li&gt;Remembering Jogen Chowdhury: An artist and dreamer of institutions&lt;/li&gt;&lt;li&gt;For Delhi’s air pollution problem, stop blaming Punjab’s farmers&lt;/li&gt;&lt;li&gt;How tussle within Ladakh’s leadership marks latest chapter in autonomy demand&lt;/li&gt;&lt;li&gt;How Starlink, Starshield pause exposed Ukraine’s drone warfare vulnerability&lt;/li&gt;&lt;li&gt;Punjab farm fires: Why 2 districts have seen most stubble burning incidents&lt;/li&gt;&lt;li&gt;Wicked surprise&lt;/li&gt;&lt;li&gt;Jantar Mantar to ‘Dilli Chalo’, protest challenges power&lt;/li&gt;&lt;li&gt;U.S. immigration restrictions may outlast Trump&lt;/li&gt;&lt;li&gt;Lessons on the right to assembly&lt;/li&gt;&lt;li&gt;The need for a national media council&lt;/li&gt;&lt;li&gt;New avenues&lt;/li&gt;&lt;li&gt;Free bus travel has given women more mobility&lt;/li&gt;&lt;li&gt;Where should judicial restraint begin?&lt;/li&gt;&lt;li&gt;Why do two newly disclosed PHP security flaws put websites and their users at risk?&lt;/li&gt;&lt;li&gt;A quiz on the occasion of the 81st anniversary of the United Nations&lt;/li&gt;&lt;li&gt;He arrived at the wedding looking dapper&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;li&gt;India needs to train its clinical staff before erecting data shields&lt;/li&gt;&lt;li&gt;Molecular machines&lt;/li&gt;&lt;li&gt;Pokémon card heist, who made rectangles, and more...&lt;/li&gt;&lt;li&gt;The monopoly company with nothing to show for&lt;/li&gt;&lt;li&gt;Trust Issues On The Internet&lt;/li&gt;&lt;li&gt;Ultraviolette’s answer to the global chip squeeze; The making of Indian flying taxis&lt;/li&gt;&lt;li&gt;New Markets, Tougher Choices And The Search For Returns&lt;/li&gt;&lt;li&gt;emissary&lt;/li&gt;&lt;li&gt;#365 Tunnel Boring Machines Aren't Boring&lt;/li&gt;&lt;li&gt;Matsyanyaaya #1: Tunnel Boring Machines Are the Lithography Machines of Construction&lt;/li&gt;&lt;li&gt;Matsyanyaaya #2: CPC Begins Turning Off the AI Knob&lt;/li&gt;&lt;li&gt;HomeWork&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-10-26T00:30:57Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/067-2026-10-26-india-opinion.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/067-2026-10-26-india-opinion.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/067-2026-10-26-india-opinion.epub"/>
+</entry>
+</feed>
