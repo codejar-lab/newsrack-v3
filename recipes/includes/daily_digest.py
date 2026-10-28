@@ -2137,6 +2137,21 @@ class DailyDigestBase(BasicNewsRecipe):
         og = soup.find('meta', attrs={'property': 'og:image'})
         lead_img = og['content'] if (og and og.get('content')) else ''
 
+        # remember the headline before trimming: IE sometimes puts the <h1>
+        # outside every IE_KEEP wrapper, and the article then opens on its byline
+        page_title = ''
+        h1_src = soup.find('h1')
+        if h1_src is not None:
+            page_title = self._norm_txt(self.tag_to_string(h1_src))
+        if not page_title:
+            ogt = soup.find('meta', attrs={'property': 'og:title'})
+            if ogt is not None and ogt.get('content'):
+                page_title = self._norm_txt(ogt['content'])
+        if not page_title and soup.title is not None:
+            page_title = self._norm_txt(self.tag_to_string(soup.title))
+        page_title = re.sub(r'\s*[|\-–]\s*(?:The\s+)?Indian Express\s*$', '',
+                            page_title, flags=re.I)
+
         nodes = soup.findAll(attrs={'class': IE_KEEP})
         self._trim_to_many(soup, nodes)
 
@@ -2217,6 +2232,16 @@ class DailyDigestBase(BasicNewsRecipe):
                 r'^\s*(?:Subscribe to see fewer ads|Story continues below|'
                 r'Advertisement)\.?\s*$', re.I)):
             t.extract()
+
+        # headline lost to the trim above: put it back on top (the optimizer
+        # styles it via the translation-title- id)
+        body = soup.find('body') or soup
+        if page_title and not any(self._norm_txt(self.tag_to_string(h))
+                                  for h in body.findAll(['h1', 'h2'])):
+            h = soup.new_tag('h1')
+            h['id'] = 'translation-title-ie'
+            h.string = page_title
+            body.insert(0, h)
 
         kept_imgs = self._ie_images(soup, wb_ts)
         # IE puts the photo and its caption in one <span><img/><span>caption
