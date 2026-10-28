@@ -267,8 +267,8 @@ rebuilt as `p.x-cap` (a bare caption `<span>` renders LARGER than body text)
 `<Name> - DD-MM-YYYY`; CrossInk saves a catalogue download as `<title>.epub`
 when the OPDS entry has no `<author>` and its file browser sorts names
 ascending/number-aware, so OPDS entry titles lead with the
-`_countdown` number and carry no author. In `daily_digest`: opinion pages come
-first, newsletters last with short names (no `NL:`); newsletter issues over
+`_countdown` number and carry no author. In `daily_digest`: newsletters come
+first (then the newspaper pages), with short names (no `NL:`); newsletter issues over
 `SPLIT_MIN_WORDS` split into one chapter per story (`_split_stories`); a heading repeating the title is dropped. Published
 books are named `<366-day-of-year>-<date>-<slug>.epub` (`_generate.book_stem`)
 so the newest sorts first in a per-year folder.

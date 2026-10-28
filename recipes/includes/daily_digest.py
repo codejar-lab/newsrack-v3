@@ -971,14 +971,14 @@ class DailyDigestBase(BasicNewsRecipe):
         return True
 
     # ------------------------------------------------------------------ index
-    # book order: the opinion pages first, newsletters after them
+    # book order: newsletters first, then the newspaper pages
     SOURCES = (
+        ('%s', 'parse_newsletters', 'fetch_newsletters'),
         ('Indian Express: %s', 'parse_indian_express', 'fetch_indian_express'),
         ('The Hindu: %s', 'parse_hindu', 'fetch_hindu'),
         ('Live Mint: %s', 'parse_livemint', 'fetch_livemint'),
         ('Business Standard: %s', 'parse_business_standard',
          'fetch_business_standard'),
-        ('%s', 'parse_newsletters', 'fetch_newsletters'),
     )
 
     def _run_source(self, name):
