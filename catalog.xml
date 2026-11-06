@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack</title>
+<updated>2026-11-06T06:01:55Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Indian Newspapers" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Daily" href="http://codejar-lab.github.io/newsrack-v3/daily.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>056 Daily Digest - 06-11-2026</title>
+<summary>Daily Digest - 06-11-2026 published at 2026-11-06 12:31AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;Mogging’s the word but the cat need not worry&lt;/li&gt;&lt;li&gt;Look beyond old climate fault lines&lt;/li&gt;&lt;li&gt;The taming of Donald Trump —  by, of, for the people&lt;/li&gt;&lt;li&gt;India’s time will come. For now, it is a middle power in a bi-multipolar world&lt;/li&gt;&lt;li&gt;C Raja Mohan writes: America’s struggle between exclusion and inclusion is far from over&lt;/li&gt;&lt;li&gt;In ‘Ramayana: Rise of a Legend’, Yash’s Ravana steals the show&lt;/li&gt;&lt;li&gt;Why Indians are investing billions abroad amid shaky domestic stock markets&lt;/li&gt;&lt;li&gt;Gyanesh Kumar bribery allegation: What a fresh complaint in Keralam claims&lt;/li&gt;&lt;li&gt;Why US midterm results could make oil cheaper, but complicate India’s Russian crude imports&lt;/li&gt;&lt;li&gt;Damning report&lt;/li&gt;&lt;li&gt;Helping hand&lt;/li&gt;&lt;li&gt;Anaemia burden — iron alone is no solution&lt;/li&gt;&lt;li&gt;What the BRICS carbon market partnership needs&lt;/li&gt;&lt;li&gt;Science should move past ‘top 2%’ label&lt;/li&gt;&lt;li&gt;Public spaces and democratic citizenship&lt;/li&gt;&lt;li&gt;A blue tsunami: historic sweep by Democrats in U.S. mid-terms&lt;/li&gt;&lt;li&gt;Outmoded form&lt;/li&gt;&lt;li&gt;From poverty alleviation to prosperity&lt;/li&gt;&lt;li&gt;‘The purpose of history is not to construct statements for contemporary political use’&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;li&gt;The DAILY QUIZ&lt;/li&gt;&lt;li&gt;Know your English&lt;/li&gt;&lt;li&gt;Bengaluru exhibition attempts to make the quantum seem human&lt;/li&gt;&lt;li&gt;The Amazon is no longer a carbon sink, it is an emitter&lt;/li&gt;&lt;li&gt;Why can't India simply build bigger strategic oil reserves?&lt;/li&gt;&lt;li&gt;Markets rise due to US election results, ONGC’s Rs 8 dividend, &amp; more&lt;/li&gt;&lt;li&gt;War and Peace and Everything in Between&lt;/li&gt;&lt;li&gt;Crimea and Punishment&lt;/li&gt;&lt;li&gt;To NATO or Not to NATO&lt;/li&gt;&lt;li&gt;The Art of the Deal&lt;/li&gt;&lt;li&gt;Your PEEK Into The Day: 5 Stories That Deserve The Front Page&lt;/li&gt;&lt;li&gt;PhysicsWallah, Lenskart, Nykaa post stellar profits&lt;/li&gt;&lt;li&gt;Did 50 crore Indians really escape poverty?&lt;/li&gt;&lt;li&gt;IndiGo finds that higher fares aren’t enough&lt;/li&gt;&lt;li&gt;Tidbits&lt;/li&gt;&lt;li&gt;Why Adani, Reliance Suddenly Want Aluminium&lt;/li&gt;&lt;li&gt;effrontery&lt;/li&gt;&lt;li&gt;The Download: Texas’s fragile AI boom and energy policy shifts&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-11-06T00:31:43Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-india-opinion.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-india-opinion.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-india-opinion.epub"/>
+</entry>
+<entry>
+<id>inshorts</id>
+<title>056 Inshorts - 06-11-2026</title>
+<summary>Inshorts - 06-11-2026 published at 2026-11-06 12:31AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;Top Stories&lt;/li&gt;&lt;li&gt;Trending&lt;/li&gt;&lt;li&gt;Business&lt;/li&gt;&lt;li&gt;Politics&lt;/li&gt;&lt;li&gt;World&lt;/li&gt;&lt;li&gt;India&lt;/li&gt;&lt;li&gt;Startup&lt;/li&gt;&lt;li&gt;Technology&lt;/li&gt;&lt;li&gt;Sports&lt;/li&gt;&lt;li&gt;Science&lt;/li&gt;&lt;li&gt;Entertainment&lt;/li&gt;&lt;li&gt;Education&lt;/li&gt;&lt;li&gt;Environment&lt;/li&gt;&lt;li&gt;Hatke&lt;/li&gt;&lt;li&gt;Miscellaneous&lt;/li&gt;&lt;/ul&gt;Section-wise 60-word news summaries from Inshorts (&lt;a href=&quot;https://inshorts.com/en/read&quot; rel=&quot;noreferrer nofollow noopener&quot; target=&quot;_blank&quot;&gt;https://inshorts.com/en/read&lt;/a&gt;).</content>
+<updated>2026-11-06T00:31:53Z</updated>
+<category term="Daily" label="Daily"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-inshorts.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-inshorts.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/056-2026-11-06-inshorts.epub"/>
+</entry>
+</feed>
