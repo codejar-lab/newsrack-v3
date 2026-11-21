@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack - Indian Newspapers</title>
+<updated>2026-11-21T06:01:04Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>041 Daily Digest - 21-11-2026</title>
+<summary>Daily Digest - 21-11-2026 published at 2026-11-21 12:30AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;The messy, marvellous business of being human&lt;/li&gt;&lt;li&gt;Beyond Earth, from Voyager 1, a lesson in humility&lt;/li&gt;&lt;li&gt;At Shenzhen, G3 — US, Russia, China — claim common ground. And strike no grand bargain&lt;/li&gt;&lt;li&gt;Surjit Bhalla: Dear Prime Minister, with due respect, the fault is not in India Inc&lt;/li&gt;&lt;li&gt;Ram Madhav: Look who’s ‘saving’ the Constitution&lt;/li&gt;&lt;li&gt;Anthropic has a mega IPO – and an uncertain path ahead&lt;/li&gt;&lt;li&gt;Record profits, stagnant pay: Data backs PM Modi’s blunt message to India Inc&lt;/li&gt;&lt;li&gt;Why have gold prices fallen by 25% in nine months, and could they dip further?&lt;/li&gt;&lt;li&gt;Know your PUC certificate validity: What new pollution rules say on renewal frequency&lt;/li&gt;&lt;li&gt;Talks without peace&lt;/li&gt;&lt;li&gt;Incomplete remedies&lt;/li&gt;&lt;li&gt;The changing dynamic of nationalism in India&lt;/li&gt;&lt;li&gt;India’s minerals policy needs to move to material security&lt;/li&gt;&lt;li&gt;What protections do workers in India have in case of layoffs?&lt;/li&gt;&lt;li&gt;M.S. Dhoni: a diplomat, a wit, and a man of few words&lt;/li&gt;&lt;li&gt;fifty years ago November 20, 1976&lt;/li&gt;&lt;li&gt;a hundred years ago November 20, 1926&lt;/li&gt;&lt;li&gt;Xi’s new rulebook for local leaders&lt;/li&gt;&lt;li&gt;What does the WHO report say about India’s TB target?&lt;/li&gt;&lt;li&gt;If AI lifts productivity, will demand sustain growth?&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;li&gt;The DAILY QUIZ&lt;/li&gt;&lt;li&gt;Know your English&lt;/li&gt;&lt;li&gt;Single-use medical devices: ban on reuse and who decides what is safe&lt;/li&gt;&lt;li&gt;Experimental GLP-1 drug demonstrates pain relief in people with osteoarthritis during trials&lt;/li&gt;&lt;li&gt;A bitter aftertaste for liquor companies&lt;/li&gt;&lt;li&gt;Forex reserves fall, Aditya Birla Capital’s Rs 400 cr NCDs, &amp; more&lt;/li&gt;&lt;li&gt;Closing The Loop&lt;/li&gt;&lt;li&gt;Your PEEK Into The Day: 5 Stories That Deserve The Front Page&lt;/li&gt;&lt;li&gt;Meet the 8 women powering India’s deeptech future; Anthropic raises a record $81.3B in IPO&lt;/li&gt;&lt;li&gt;Is GTA VI the last hope of a struggling industry?&lt;/li&gt;&lt;li&gt;India’s greener jet fuel comes with a bill&lt;/li&gt;&lt;li&gt;Tidbits:&lt;/li&gt;&lt;li&gt;Why India Slipped In The Climate Index&lt;/li&gt;&lt;li&gt;India’s Export Policy Is Failing Its Exporters&lt;/li&gt;&lt;li&gt;ruthless&lt;/li&gt;&lt;li&gt;The Download: inside the quest to make our minds immortal&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-11-21T00:30:57Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/041-2026-11-21-india-opinion.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/041-2026-11-21-india-opinion.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/041-2026-11-21-india-opinion.epub"/>
+</entry>
+</feed>
