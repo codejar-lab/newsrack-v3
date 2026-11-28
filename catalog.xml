@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="opds.xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+<id>newsrack</id>
+<title>News Rack</title>
+<updated>2026-11-28T06:01:05Z</updated>
+<author>
+<name>https://codejar-lab.github.io/newsrack-v3/</name>
+<uri>https://codejar-lab.github.io/newsrack-v3/</uri>
+</author>
+<link rel="self" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<link rel="start" type="application/atom+xml;profile=opds-catalog" href="http://codejar-lab.github.io/newsrack-v3/catalog.xml"/>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Indian Newspapers" href="http://codejar-lab.github.io/newsrack-v3/indian-newspapers.xml"/>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Daily" href="http://codejar-lab.github.io/newsrack-v3/daily.xml"/>
+<entry>
+<id>india-opinion</id>
+<title>034 Daily Digest - 28-11-2026</title>
+<summary>Daily Digest - 28-11-2026 published at 2026-11-28 12:30AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;WhatsApp uncle, now fully automated&lt;/li&gt;&lt;li&gt;As Trump rebuilds tariff wall, Delhi must seek trade certainty&lt;/li&gt;&lt;li&gt;CM Vijay must face Court, forge political consensus&lt;/li&gt;&lt;li&gt;Under the garb of nari shakti, Modi government is smuggling in delimitation&lt;/li&gt;&lt;li&gt;The delimitation question we need to ask: What happens when the Rajya Sabha is diminished?&lt;/li&gt;&lt;li&gt;Strobe Talbott and the remaking of India-US relations&lt;/li&gt;&lt;li&gt;Why is Bangladesh protesting for Sheikh Hasina’s return, and how is India involved?&lt;/li&gt;&lt;li&gt;How delimitation will change political representation in India&lt;/li&gt;&lt;li&gt;Tata Steel-APL Apollo deal: Why SEBI is reviewing the Rs 28,000-crore deal&lt;/li&gt;&lt;li&gt;Indefensible defiance&lt;/li&gt;&lt;li&gt;Pressure tactics&lt;/li&gt;&lt;li&gt;The Siang dam — strategic ambition, ecological fallout&lt;/li&gt;&lt;li&gt;Bridging India’s critical border infrastructure gap&lt;/li&gt;&lt;li&gt;Is India Inc to blame for low wages and unemployment?&lt;/li&gt;&lt;li&gt;A healthy career, on the streets&lt;/li&gt;&lt;li&gt;Folk songs and sayings&lt;/li&gt;&lt;li&gt;The fiscal cost of cash-transfer schemes&lt;/li&gt;&lt;li&gt;The impact of fraudulent books on the moral rights of authors&lt;/li&gt;&lt;li&gt;Thanksgiving was celebrated across the United States on November 26. A quiz on what we know about Thanksgiving day.&lt;/li&gt;&lt;li&gt;letters to the editor&lt;/li&gt;&lt;li&gt;Know your English&lt;/li&gt;&lt;li&gt;Collagen supplements: does the science live up to the promise?&lt;/li&gt;&lt;li&gt;Recurring UTIs: here’s why some infections keep coming back and are difficult to treat&lt;/li&gt;&lt;li&gt;How is SpiceJet still surviving?&lt;/li&gt;&lt;li&gt;Forex reserves fall, RBI reduces daily CRR requirement, &amp; more&lt;/li&gt;&lt;li&gt;Closing The Loop&lt;/li&gt;&lt;li&gt;Your PEEK Into The Day: 5 Stories That Deserve The Front Page&lt;/li&gt;&lt;li&gt;Jensen Huang needs a new playbook for his second innings at Nvidia&lt;/li&gt;&lt;li&gt;When will Agnikul start earning operating revenue?;&lt;/li&gt;&lt;li&gt;How neighbourhood medical stores are becoming e-clinics&lt;/li&gt;&lt;li&gt;Sagar Defence wants to take its unmanned machines public&lt;/li&gt;&lt;li&gt;How Tata Steel plans to buy APL Apollo with APL Apollo’s money&lt;/li&gt;&lt;li&gt;Tidbits:&lt;/li&gt;&lt;li&gt;Climate Talks End In Crash And Burn&lt;/li&gt;&lt;li&gt;A Digital Rupee By Force&lt;/li&gt;&lt;li&gt;injunction&lt;/li&gt;&lt;li&gt;The Download: Innovators Under 35 nominations are open, and a bionic window into the mind&lt;/li&gt;&lt;/ul&gt;Opinion, Op-Ed and Editorial pages of Business Standard, The Hindu, Live Mint and The Indian Express, the Science page of The Hindu, plus a set of newsletters.</content>
+<updated>2026-11-28T00:30:57Z</updated>
+<category term="Indian Newspapers" label="Indian Newspapers"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-india-opinion.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-india-opinion.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-india-opinion.epub"/>
+</entry>
+<entry>
+<id>inshorts</id>
+<title>034 Inshorts - 28-11-2026</title>
+<summary>Inshorts - 28-11-2026 published at 2026-11-28 12:31AM UTC</summary>
+<content type="text/html">Articles in this issue:&lt;ul&gt;&lt;li&gt;Top Stories&lt;/li&gt;&lt;li&gt;Trending&lt;/li&gt;&lt;li&gt;Business&lt;/li&gt;&lt;li&gt;Politics&lt;/li&gt;&lt;li&gt;World&lt;/li&gt;&lt;li&gt;India&lt;/li&gt;&lt;li&gt;Startup&lt;/li&gt;&lt;li&gt;Technology&lt;/li&gt;&lt;li&gt;Sports&lt;/li&gt;&lt;li&gt;Science&lt;/li&gt;&lt;li&gt;Entertainment&lt;/li&gt;&lt;li&gt;Education&lt;/li&gt;&lt;li&gt;Environment&lt;/li&gt;&lt;li&gt;Hatke&lt;/li&gt;&lt;li&gt;Miscellaneous&lt;/li&gt;&lt;/ul&gt;Section-wise 60-word news summaries from Inshorts (&lt;a href=&quot;https://inshorts.com/en/read&quot; rel=&quot;noreferrer nofollow noopener&quot; target=&quot;_blank&quot;&gt;https://inshorts.com/en/read&lt;/a&gt;).</content>
+<updated>2026-11-28T00:31:03Z</updated>
+<category term="Daily" label="Daily"/>
+<link rel="http://opds-spec.org/image" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-inshorts.jpg"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-inshorts.thumb.jpg"/>
+<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://codejar-lab.github.io/newsrack-v3/034-2026-11-28-inshorts.epub"/>
+</entry>
+</feed>
